@@ -83,7 +83,10 @@ async function doScanJunk() {
 export function toggleCategory(id: CategoryId) {
   const next = new Set(selectedCategories.value);
   next.has(id) ? next.delete(id) : next.add(id);
-  categoryChoices.set(id, next.has(id));
+  // Une suppression définitive ne doit jamais être présélectionnée au scan suivant.
+  const permanent = categories.value.some((c) => c.id === id && c.permanent);
+  if (permanent) categoryChoices.delete(id);
+  else categoryChoices.set(id, next.has(id));
   selectedCategories.value = next;
 }
 
