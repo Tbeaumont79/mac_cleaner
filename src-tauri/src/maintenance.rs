@@ -106,13 +106,18 @@ const TASK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 // Laisse le temps de saisir le mot de passe en plus des tâches elles-mêmes.
 const ADMIN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
-fn output_with_timeout(cmd: &mut Command, limit: Duration) -> Result<Output, String> {
+/// Lance la commande dans son propre groupe de processus pour pouvoir arrêter
+/// aussi ce qu'elle a lancé. Un processus root (tâches admin) ne peut pas être
+/// arrêté par l'app : `timeout_message` le dit honnêtement.
+fn output_with_timeout(cmd: &mut Command, limit: Duration, timeout_message: &str) -> Result<Output, String> {
+    use std::os::unix::process::CommandExt;
     let child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0)
         .spawn()
         .map_err(|e| e.to_string())?;
-    let pid = child.id() as libc::pid_t;
+    let pgid = child.id() as libc::pid_t;
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(child.wait_with_output());
@@ -120,14 +125,19 @@ fn output_with_timeout(cmd: &mut Command, limit: Duration) -> Result<Output, Str
     match rx.recv_timeout(limit) {
         Ok(out) => out.map_err(|e| e.to_string()),
         Err(_) => {
-            unsafe { libc::kill(pid, libc::SIGKILL) };
-            Err("délai dépassé, tâche interrompue".to_string())
+            // Le groupe garde son identifiant tant qu'un de ses processus vit encore.
+            unsafe { libc::killpg(pgid, libc::SIGKILL) };
+            Err(timeout_message.to_string())
         }
     }
 }
 
 fn run_shell(cmd: &str) -> Result<(), String> {
-    let out = output_with_timeout(Command::new("/bin/sh").args(["-c", cmd]), TASK_TIMEOUT)?;
+    let out = output_with_timeout(
+        Command::new("/bin/sh").args(["-c", cmd]),
+        TASK_TIMEOUT,
+        "délai dépassé, tâche interrompue",
+    )?;
     if out.status.success() {
         return Ok(());
     }
@@ -151,7 +161,11 @@ fn run_admin(specs: &[&Spec]) -> Vec<TaskResult> {
         "do shell script \"{}\" with administrator privileges",
         script.replace('\\', "\\\\").replace('"', "\\\"")
     );
-    let out = output_with_timeout(Command::new("osascript").args(["-e", &apple_script]), ADMIN_TIMEOUT);
+    let out = output_with_timeout(
+        Command::new("osascript").args(["-e", &apple_script]),
+        ADMIN_TIMEOUT,
+        "délai dépassé : la tâche continue peut-être en arrière-plan",
+    );
     match out {
         Ok(o) if o.status.success() => {
             let stdout = String::from_utf8_lossy(&o.stdout);
@@ -203,4 +217,29 @@ pub fn run(ids: Vec<TaskId>) -> Vec<TaskResult> {
         results.extend(run_admin(&admin));
     }
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_kills_the_whole_process_group() {
+        let start = std::time::Instant::now();
+        let res = output_with_timeout(
+            Command::new("/bin/sh").args(["-c", "sleep 30 & wait"]),
+            Duration::from_millis(300),
+            "timeout",
+        );
+        assert_eq!(res.unwrap_err(), "timeout");
+        std::thread::sleep(Duration::from_millis(200));
+        let left = Command::new("pgrep").args(["-f", "^sleep 30$"]).output().unwrap();
+        assert!(start.elapsed() < Duration::from_secs(5));
+        assert!(left.stdout.is_empty(), "le sleep enfant tourne encore");
+    }
+
+    #[test]
+    fn reports_exit_code_when_stderr_is_empty() {
+        assert_eq!(run_shell("exit 3").unwrap_err(), "échec (code 3)");
+    }
 }

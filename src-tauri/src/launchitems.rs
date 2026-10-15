@@ -115,8 +115,8 @@ const INTERPRETERS: &[&str] = &[
     "sh", "bash", "zsh", "env", "python", "python3", "perl", "ruby", "node", "osascript",
 ];
 
-// launchd cherche les noms nus dans un PATH minimal.
-const LAUNCHD_PATH: &[&str] = &["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin", "/opt/homebrew/bin"];
+// PATH par défaut de launchd pour les noms nus.
+const LAUNCHD_PATH: &[&str] = &["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
 
 fn resolve_program(program: &str) -> Option<PathBuf> {
     if program.contains('/') {

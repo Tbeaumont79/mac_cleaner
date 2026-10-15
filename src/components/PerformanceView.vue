@@ -47,7 +47,7 @@ async function toggleItem(item: LaunchItem, event: Event) {
 
 function lockReason(item: LaunchItem): string | undefined {
   if (item.scope !== "User") return "Géré par l'administrateur";
-  if (!item.editable) return "Fichier lié par un lien symbolique : à modifier à la main";
+  if (!item.editable) return "Non modifiable ici (lien symbolique ou nom inhabituel)";
   return undefined;
 }
 
