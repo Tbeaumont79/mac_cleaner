@@ -7,9 +7,11 @@ import {
   describeClean,
   largeFiles,
   largeFilesTotal,
-  minMb,
+  filesError,
+  junkError,
   runSmartClean,
   runSmartScan,
+  scannedMinMb,
   selectedJunkBytes,
   smartPhase,
   smartStep,
@@ -37,9 +39,15 @@ const title = computed(
       scanning: "Analyse en cours",
       results: "Analyse terminée",
       cleaning: "Nettoyage en cours",
-      cleaned: "Ton Mac est tout propre",
+      cleaned: cleanedWell.value ? "Ton Mac est tout propre" : "Nettoyage terminé",
     })[smartPhase.value],
 );
+
+const cleanedWell = computed(
+  () => !!smartSummary.value && cleanedBytes.value > 0 && smartSummary.value.errors.length === 0,
+);
+
+const errorMessage = computed(() => junkError.value ?? filesError.value);
 
 const subtitle = computed(() => {
   switch (smartPhase.value) {
@@ -117,7 +125,7 @@ const modules = computed<ModuleCard[]>(() => {
         "files",
         files
           ? `${files} fichier${files > 1 ? "s" : ""} · ${formatBytes(largeFilesTotal.value)}`
-          : `Aucun au-delà de ${formatBytes(minMb.value * 1_000_000)}`,
+          : `Aucun au-delà de ${formatBytes(scannedMinMb.value * 1_000_000)}`,
       ),
       target: "files",
     },
@@ -164,6 +172,7 @@ async function confirmClean() {
 
     <h1>{{ title }}</h1>
     <p class="sub">{{ subtitle }}</p>
+    <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
 
     <button v-if="mainButton" type="button" class="main-btn" @click="mainButton.run">
       {{ mainButton.label }}
@@ -269,6 +278,11 @@ h1 {
   max-width: 470px;
   line-height: 1.5;
   min-height: 22px;
+}
+.error {
+  margin: 12px 0 0;
+  text-align: center;
+  max-width: 470px;
 }
 .main-btn {
   margin-top: 26px;

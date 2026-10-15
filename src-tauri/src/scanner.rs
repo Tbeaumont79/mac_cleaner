@@ -51,7 +51,7 @@ fn scan_category(cat: &Category) -> CategoryScan {
         if let Err(e) = std::fs::read_dir(&path) {
             access_denied |= e.kind() == std::io::ErrorKind::PermissionDenied;
         }
-        for entry in WalkDir::new(&path).into_iter().filter_map(Result::ok) {
+        for entry in WalkDir::new(&path).follow_root_links(false).into_iter().filter_map(Result::ok) {
             if entry.file_type().is_file() {
                 if let Ok(meta) = entry.metadata() {
                     size_bytes = size_bytes.saturating_add(meta.len());

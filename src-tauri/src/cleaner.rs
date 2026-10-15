@@ -130,7 +130,10 @@ fn trash_one_path(path: &str) -> Result<(), String> {
     let target = std::fs::canonicalize(parent)
         .map_err(|e| e.to_string())?
         .join(name);
-    std::fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
+    let meta = std::fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
+    if meta.is_dir() {
+        return Err("seuls les fichiers peuvent être mis à la corbeille ici".to_string());
+    }
     if target == home || !target.starts_with(&home) {
         return Err("chemin hors du dossier personnel : refusé".to_string());
     }
@@ -171,7 +174,7 @@ fn remove_permanently(path: &std::path::Path) -> Result<(), String> {
 fn dir_size(path: &std::path::Path) -> u64 {
     use walkdir::WalkDir;
     let mut total = 0u64;
-    for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(path).follow_root_links(false).into_iter().filter_map(Result::ok) {
         if entry.file_type().is_file() {
             if let Ok(meta) = entry.metadata() {
                 total = total.saturating_add(meta.len());

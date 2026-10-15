@@ -17,7 +17,10 @@ async fn scan() -> Vec<scanner::CategoryScan> {
 /// Nettoie les catégories sélectionnées (déplacement vers la corbeille).
 /// Renvoie un bilan par catégorie. Une catégorie inconnue est ignorée.
 #[tauri::command]
-async fn clean(category_ids: Vec<CategoryId>) -> Vec<cleaner::CleanResult> {
+async fn clean(mut category_ids: Vec<CategoryId>) -> Vec<cleaner::CleanResult> {
+    // Vider la corbeille en premier : sinon elle emporterait définitivement ce
+    // que les autres catégories viennent d'y déplacer.
+    category_ids.sort_by_key(|id| !targets::find(*id).is_some_and(|c| c.permanent));
     category_ids
         .into_iter()
         .filter_map(|id| cleaner::clean_category(id).ok())

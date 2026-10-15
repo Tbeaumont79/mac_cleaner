@@ -51,15 +51,24 @@ export const trashCategory = computed(() =>
   categories.value.find((c) => c.id === "Trash"),
 );
 
-export async function scanJunk() {
+let junkScan: Promise<void> | null = null;
+
+export function scanJunk(): Promise<void> {
+  junkScan ??= doScanJunk().finally(() => (junkScan = null));
+  return junkScan;
+}
+
+async function doScanJunk() {
   junkScanning.value = true;
   junkError.value = null;
   try {
+    const firstScan = !junkScanned.value;
+    const previous = selectedCategories.value;
     categories.value = await scan();
     // La corbeille est définitive : jamais présélectionnée.
     selectedCategories.value = new Set(
       categories.value
-        .filter((c) => c.size_bytes > 0 && !c.permanent)
+        .filter((c) => c.size_bytes > 0 && (firstScan ? !c.permanent : previous.has(c.id)))
         .map((c) => c.id),
     );
     junkScanned.value = true;
@@ -84,7 +93,7 @@ export interface CleanSummary {
 
 export async function cleanSelected(): Promise<CleanSummary | null> {
   const targets = selectedJunk.value;
-  if (targets.length === 0) return null;
+  if (targets.length === 0 || junkCleaning.value || junkScanning.value) return null;
   const permanent = new Set(targets.filter((c) => c.permanent).map((c) => c.id));
   junkCleaning.value = true;
   junkError.value = null;
@@ -113,6 +122,7 @@ export const selectedFiles = ref<Set<string>>(new Set());
 export const filesScanning = ref(false);
 export const filesTrashing = ref(false);
 export const filesScanned = ref(false);
+export const scannedMinMb = ref(minMb.value);
 export const filesError = ref<string | null>(null);
 
 export const largeFilesTotal = computed(() =>
@@ -125,12 +135,21 @@ export const selectedFilesBytes = computed(() =>
     .reduce((sum, f) => sum + f.size_bytes, 0),
 );
 
-export async function scanLargeFiles() {
+let filesScan: Promise<void> | null = null;
+
+export function scanLargeFiles(): Promise<void> {
+  filesScan ??= doScanLargeFiles().finally(() => (filesScan = null));
+  return filesScan;
+}
+
+async function doScanLargeFiles() {
   filesScanning.value = true;
   filesError.value = null;
   selectedFiles.value = new Set();
+  const threshold = minMb.value;
   try {
-    largeFiles.value = await findLargeFiles(minMb.value);
+    largeFiles.value = await findLargeFiles(threshold);
+    scannedMinMb.value = threshold;
     filesScanned.value = true;
   } catch (e) {
     filesError.value = String(e);
@@ -146,6 +165,7 @@ export function toggleFile(path: string) {
 }
 
 export async function trashSelectedFiles(): Promise<TrashResult[]> {
+  if (filesTrashing.value || selectedFiles.value.size === 0) return [];
   filesTrashing.value = true;
   filesError.value = null;
   try {
@@ -157,6 +177,8 @@ export async function trashSelectedFiles(): Promise<TrashResult[]> {
     if (failed.length) {
       filesError.value = `${failed.length} fichier(s) non déplacé(s) : ${failed[0].error ?? ""}`;
     }
+    // La corbeille vient de grossir : sa taille affichée doit suivre.
+    if (junkScanned.value) await scanJunk();
     return results;
   } catch (e) {
     filesError.value = String(e);
@@ -173,6 +195,7 @@ export const smartStep = ref<"junk" | "files">("junk");
 export const smartSummary = ref<CleanSummary | null>(null);
 
 export async function runSmartScan() {
+  if (smartPhase.value === "scanning" || smartPhase.value === "cleaning") return;
   smartPhase.value = "scanning";
   smartStep.value = "junk";
   await scanJunk();
@@ -182,6 +205,7 @@ export async function runSmartScan() {
 }
 
 export async function runSmartClean() {
+  if (smartPhase.value !== "results") return;
   smartPhase.value = "cleaning";
   smartSummary.value = await cleanSelected();
   smartPhase.value = smartSummary.value ? "cleaned" : "results";

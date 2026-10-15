@@ -10,6 +10,7 @@ import {
   minMb,
   refreshDisk,
   scanLargeFiles,
+  scannedMinMb,
   selectedFiles,
   selectedFilesBytes,
   toggleFile,
@@ -117,7 +118,7 @@ async function confirmTrash() {
         Lance une recherche pour lister les fichiers de plus de {{ formatBytes(minMb * 1_000_000) }}.
       </p>
       <p v-else-if="largeFiles.length === 0" class="message">
-        Aucun fichier au-delà de {{ formatBytes(minMb * 1_000_000) }}.
+        Aucun fichier au-delà de {{ formatBytes(scannedMinMb * 1_000_000) }}.
       </p>
 
       <template v-else>
