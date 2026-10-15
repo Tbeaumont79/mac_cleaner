@@ -14,6 +14,7 @@ import {
   scanJunk,
   selectedCategories,
   selectedJunkBytes,
+  smartPhase,
   toggleCategory,
 } from "../lib/store";
 import CleanConfirm from "./CleanConfirm.vue";
@@ -21,7 +22,8 @@ import CleanConfirm from "./CleanConfirm.vue";
 const confirmOpen = ref(false);
 const summary = ref<CleanSummary | null>(null);
 const denied = computed(() => categories.value.filter((c) => c.access_denied));
-const busy = computed(() => junkScanning.value || junkCleaning.value);
+// Pendant un lancement depuis l'Analyse intelligente, la sélection est figée.
+const busy = computed(() => junkScanning.value || junkCleaning.value || smartPhase.value === "cleaning");
 
 const footer = computed(() => {
   if (junkCleaning.value) return "Nettoyage en cours…";
