@@ -3,6 +3,7 @@
 // `CategoryId` de src-tauri/src/targets.rs (serde sérialise par nom de variante).
 
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 export type CategoryId =
   | "UserCaches"
@@ -21,6 +22,7 @@ export interface CategoryScan {
   exists: boolean;
   /** true = nettoyage définitif (pas la corbeille). */
   permanent: boolean;
+  access_denied: boolean;
 }
 
 export interface CleanResult {
@@ -34,6 +36,11 @@ export interface LargeFile {
   path: string;
   size_bytes: number;
   age_days: number | null;
+}
+
+export interface DiskUsage {
+  total_bytes: number;
+  available_bytes: number;
 }
 
 export interface TrashResult {
@@ -62,11 +69,19 @@ export function clean(categoryIds: CategoryId[]): Promise<CleanResult[]> {
   return invoke<CleanResult[]>("clean", { categoryIds });
 }
 
-/** Formate un nombre d'octets en chaîne lisible (Ko, Mo, Go…). */
+export function diskUsage(): Promise<DiskUsage | null> {
+  return invoke<DiskUsage | null>("disk_usage");
+}
+
+// Base 1000 comme le Finder, pour que les tailles concordent avec macOS.
 export function formatBytes(bytes: number): string {
   if (bytes <= 0) return "0 o";
   const units = ["o", "Ko", "Mo", "Go", "To"];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  const value = bytes / Math.pow(1024, i);
-  return `${value.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1000)));
+  const value = bytes / Math.pow(1000, i);
+  return `${value.toLocaleString("fr-FR", { maximumFractionDigits: i < 2 ? 0 : 1 })} ${units[i]}`;
+}
+
+export function openFullDiskAccessSettings(): Promise<void> {
+  return openUrl("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles");
 }

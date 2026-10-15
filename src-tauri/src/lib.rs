@@ -1,4 +1,6 @@
 mod cleaner;
+mod disk;
+mod guard;
 mod largefiles;
 mod scanner;
 mod targets;
@@ -8,14 +10,17 @@ use targets::CategoryId;
 /// Scanne toutes les catégories (lecture seule) et renvoie les tailles
 /// récupérables. Appelé au lancement de l'app.
 #[tauri::command]
-fn scan() -> Vec<scanner::CategoryScan> {
+async fn scan() -> Vec<scanner::CategoryScan> {
     scanner::scan_all()
 }
 
 /// Nettoie les catégories sélectionnées (déplacement vers la corbeille).
 /// Renvoie un bilan par catégorie. Une catégorie inconnue est ignorée.
 #[tauri::command]
-fn clean(category_ids: Vec<CategoryId>) -> Vec<cleaner::CleanResult> {
+async fn clean(mut category_ids: Vec<CategoryId>) -> Vec<cleaner::CleanResult> {
+    // Vider la corbeille en premier : sinon elle emporterait définitivement ce
+    // que les autres catégories viennent d'y déplacer.
+    category_ids.sort_by_key(|id| !targets::find(*id).is_some_and(|c| c.permanent));
     category_ids
         .into_iter()
         .filter_map(|id| cleaner::clean_category(id).ok())
@@ -24,14 +29,19 @@ fn clean(category_ids: Vec<CategoryId>) -> Vec<cleaner::CleanResult> {
 
 /// Recherche les gros fichiers de `~` au-dessus du seuil donné (en Mo).
 #[tauri::command]
-fn find_large_files(min_mb: u64) -> Vec<largefiles::LargeFile> {
+async fn find_large_files(min_mb: u64) -> Vec<largefiles::LargeFile> {
     largefiles::find(largefiles::mb_to_bytes(min_mb))
 }
 
 /// Déplace des fichiers précis vers la corbeille (chemins validés, réversible).
 #[tauri::command]
-fn trash_paths(paths: Vec<String>) -> Vec<cleaner::TrashResult> {
+async fn trash_paths(paths: Vec<String>) -> Vec<cleaner::TrashResult> {
     cleaner::trash_paths(paths)
+}
+
+#[tauri::command]
+async fn disk_usage() -> Option<disk::DiskUsage> {
+    disk::usage()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -42,7 +52,8 @@ pub fn run() {
             scan,
             clean,
             find_large_files,
-            trash_paths
+            trash_paths,
+            disk_usage
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -90,7 +90,7 @@ pub fn categories() -> &'static [Category] {
         Category {
             id: CategoryId::Trash,
             label: "Corbeille",
-            description: "Vide la corbeille. ⚠️ Suppression définitive.",
+            description: "Vide la corbeille, sans retour possible.",
             paths: &[PathSpec::Home(".Trash")],
             permanent: true,
         },
@@ -102,35 +102,36 @@ pub fn find(id: CategoryId) -> Option<&'static Category> {
     categories().iter().find(|c| c.id == id)
 }
 
+/// `true` si la catégorie dépend de `~/Library/Containers` et que macOS en refuse la lecture.
+pub fn containers_denied(cat: &Category) -> bool {
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+    cat.paths.iter().any(|spec| matches!(spec, PathSpec::ContainerEach(_)))
+        && std::fs::read_dir(home.join("Library/Containers"))
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied)
+}
+
 /// Résout les chemins absolus d'une catégorie sous le `$HOME` de l'utilisateur.
 ///
-/// Garde-fou : chaque chemin résolu doit rester **à l'intérieur** du dossier
-/// personnel. Tout chemin qui s'en échappe (`..`, lien, etc.) est écarté.
+/// Garde-fou : chaque chemin résolu est un vrai dossier sous `~`, sans lien
+/// symbolique sur le trajet (`real_dir`).
 pub fn resolved_paths(cat: &Category) -> Vec<PathBuf> {
     let Some(home) = dirs::home_dir() else {
         return Vec::new();
     };
+    let home = std::fs::canonicalize(&home).unwrap_or(home);
 
     let mut out = Vec::new();
     for spec in cat.paths {
         match spec {
-            PathSpec::Home(rel) => {
-                let p = home.join(rel);
-                if p.starts_with(&home) {
-                    out.push(p);
-                }
-            }
+            PathSpec::Home(rel) => out.extend(real_dir(home.join(rel))),
             PathSpec::ContainerEach(sub) => {
                 let containers = home.join("Library/Containers");
                 if let Ok(read) = std::fs::read_dir(&containers) {
                     for entry in read.filter_map(Result::ok) {
-                        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                        if !is_dir {
-                            continue;
-                        }
-                        let p = entry.path().join(sub);
-                        if p.starts_with(&home) {
-                            out.push(p);
+                        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                            out.extend(real_dir(entry.path().join(sub)));
                         }
                     }
                 }
@@ -138,4 +139,36 @@ pub fn resolved_paths(cat: &Category) -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// Garde le dossier seulement s'il existe et qu'aucun maillon n'est un lien
+/// symbolique : une app sandboxée pourrait remplacer son dossier de caches par
+/// un lien vers ~/Documents.
+fn real_dir(expected: PathBuf) -> Option<PathBuf> {
+    let real = std::fs::canonicalize(&expected).ok()?;
+    (real == expected && real.is_dir()).then_some(real)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::real_dir;
+
+    #[test]
+    fn real_dir_rejects_symlinks() {
+        let base = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join("mac_cleaner_real_dir_test");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("real/Caches")).unwrap();
+        std::os::unix::fs::symlink(base.join("real"), base.join("link")).unwrap();
+
+        let direct = real_dir(base.join("real/Caches"));
+        let through_link = real_dir(base.join("link/Caches"));
+        let missing = real_dir(base.join("real/Missing"));
+        std::fs::remove_dir_all(&base).unwrap();
+
+        assert!(direct.is_some());
+        assert!(through_link.is_none());
+        assert!(missing.is_none());
+    }
 }
