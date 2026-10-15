@@ -37,7 +37,10 @@ pub struct LaunchItem {
     pub program: Option<String>,
     pub scope: Scope,
     pub enabled: bool,
-    pub signature: Signature,
+    /// Peut être activé ou désactivé par l'utilisateur (agent personnel, plist réel).
+    pub editable: bool,
+    /// Absente quand la liste est demandée sans analyse des signatures.
+    pub signature: Option<Signature>,
 }
 
 fn uid() -> u32 {
@@ -112,18 +115,43 @@ const INTERPRETERS: &[&str] = &[
     "sh", "bash", "zsh", "env", "python", "python3", "perl", "ruby", "node", "osascript",
 ];
 
+// launchd cherche les noms nus dans un PATH minimal.
+const LAUNCHD_PATH: &[&str] = &["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin", "/opt/homebrew/bin"];
+
+fn resolve_program(program: &str) -> Option<PathBuf> {
+    if program.contains('/') {
+        let path = PathBuf::from(program);
+        return path.is_absolute().then_some(path).filter(|p| p.exists());
+    }
+    LAUNCHD_PATH
+        .iter()
+        .map(|dir| Path::new(dir).join(program))
+        .find(|p| p.exists())
+}
+
+fn is_script(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 2];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut head))
+        .is_ok_and(|()| &head == b"#!")
+}
+
 pub fn signature(program: Option<&str>) -> Signature {
     let Some(program) = program else {
         return Signature::ProgramMissing;
     };
-    let path = Path::new(program);
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    let name = Path::new(program).file_name().and_then(|n| n.to_str()).unwrap_or_default();
     if INTERPRETERS.contains(&name) {
         return Signature::Script;
     }
-    if !path.exists() {
+    let Some(path) = resolve_program(program) else {
         return Signature::ProgramMissing;
+    };
+    if is_script(&path) {
+        return Signature::Script;
     }
+    let path = path.as_path();
     let Ok(info) = Command::new("codesign").args(["-dv", "--verbose=2"]).arg(path).output() else {
         return Signature::Unsigned;
     };
@@ -166,17 +194,17 @@ pub fn list(with_signatures: bool) -> Vec<LaunchItem> {
             }
             let domain = if scope == Scope::SystemDaemon { &system } else { &gui };
             let disabled = domain.get(&parsed.label).copied().unwrap_or(parsed.disabled_in_plist);
-            let signature = if with_signatures {
-                signature(parsed.program.as_deref())
-            } else {
-                Signature::ProgramMissing
-            };
+            let signature = with_signatures.then(|| signature(parsed.program.as_deref()));
+            let editable = scope == Scope::User
+                && is_safe_label(&parsed.label)
+                && std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file());
             items.push(LaunchItem {
                 label: parsed.label,
                 plist_path: path.to_string_lossy().into_owned(),
                 program: parsed.program,
                 scope,
                 enabled: !disabled,
+                editable,
                 signature,
             });
         }
@@ -230,6 +258,12 @@ mod tests {
     #[test]
     fn interpreters_are_flagged_as_scripts() {
         assert_eq!(signature(Some("/bin/sh")), Signature::Script);
+        let script = std::env::temp_dir().join("mac_cleaner_shebang_test.sh");
+        std::fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
+        let result = signature(script.to_str());
+        std::fs::remove_file(&script).unwrap();
+        assert_eq!(result, Signature::Script);
+        assert!(matches!(signature(Some("true")), Signature::Trusted { .. }));
         assert_eq!(signature(Some("/nonexistent/tool")), Signature::ProgramMissing);
         assert_eq!(signature(None), Signature::ProgramMissing);
     }

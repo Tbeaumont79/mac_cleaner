@@ -1,7 +1,9 @@
 //! Tâches de maintenance : une liste blanche de commandes système fixes.
 //! Le frontend n'envoie que des `TaskId`, jamais de commande.
 
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -100,16 +102,41 @@ pub fn list() -> Vec<MaintenanceTask> {
     specs().into_iter().map(|s| s.task).collect()
 }
 
-fn run_shell(cmd: &str) -> Result<(), String> {
-    let out = Command::new("/bin/sh")
-        .args(["-c", cmd])
-        .output()
+const TASK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+// Laisse le temps de saisir le mot de passe en plus des tâches elles-mêmes.
+const ADMIN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
+fn output_with_timeout(cmd: &mut Command, limit: Duration) -> Result<Output, String> {
+    let child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    let pid = child.id() as libc::pid_t;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    match rx.recv_timeout(limit) {
+        Ok(out) => out.map_err(|e| e.to_string()),
+        Err(_) => {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+            Err("délai dépassé, tâche interrompue".to_string())
+        }
     }
+}
+
+fn run_shell(cmd: &str) -> Result<(), String> {
+    let out = output_with_timeout(Command::new("/bin/sh").args(["-c", cmd]), TASK_TIMEOUT)?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Err(if stderr.is_empty() {
+        format!("échec (code {})", out.status.code().unwrap_or(-1))
+    } else {
+        stderr
+    })
 }
 
 /// Toutes les tâches admin passent par une seule demande de mot de passe.
@@ -124,7 +151,7 @@ fn run_admin(specs: &[&Spec]) -> Vec<TaskResult> {
         "do shell script \"{}\" with administrator privileges",
         script.replace('\\', "\\\\").replace('"', "\\\"")
     );
-    let out = Command::new("osascript").args(["-e", &apple_script]).output();
+    let out = output_with_timeout(Command::new("osascript").args(["-e", &apple_script]), ADMIN_TIMEOUT);
     match out {
         Ok(o) if o.status.success() => {
             let stdout = String::from_utf8_lossy(&o.stdout);
@@ -154,7 +181,7 @@ fn run_admin(specs: &[&Spec]) -> Vec<TaskResult> {
         }
         Err(e) => specs
             .iter()
-            .map(|s| TaskResult { id: s.task.id, ok: false, error: Some(e.to_string()) })
+            .map(|s| TaskResult { id: s.task.id, ok: false, error: Some(e.clone()) })
             .collect(),
     }
 }

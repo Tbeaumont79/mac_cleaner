@@ -33,10 +33,22 @@ const footer = computed(() => {
   return needsPassword.value ? `${base} · mot de passe administrateur requis` : base;
 });
 
-function state(id: TaskId): { label: string; tone: string } {
+function state(id: TaskId): { label: string; tone: string } | null {
   const r = taskResults.value.get(id);
-  if (!r) return { label: "Recommandée", tone: "warn" };
-  return r.ok ? { label: "Exécutée", tone: "ok" } : { label: r.error ?? "Échec", tone: "bad" };
+  if (!r) return null;
+  return r.ok ? { label: "Exécutée", tone: "ok" } : { label: r.error || "Échec", tone: "bad" };
+}
+
+async function toggleItem(item: LaunchItem, event: Event) {
+  const el = event.target as HTMLInputElement;
+  // Vue ne réécrit pas `checked` si l'état n'a pas changé : on le remet à la main en cas d'échec.
+  if (!(await setLaunchItem(item, el.checked))) el.checked = item.enabled;
+}
+
+function lockReason(item: LaunchItem): string | undefined {
+  if (item.scope !== "User") return "Géré par l'administrateur";
+  if (!item.editable) return "Fichier lié par un lien symbolique : à modifier à la main";
+  return undefined;
 }
 
 function toggle(id: TaskId) {
@@ -91,7 +103,7 @@ onMounted(() => {
               <span v-if="t.admin" class="tag" title="Demande le mot de passe administrateur">Admin</span>
             </span>
             <span class="desc">{{ t.description }}</span>
-            <span class="state" :class="state(t.id).tone">{{ state(t.id).label }}</span>
+            <span v-if="state(t.id)" class="state" :class="state(t.id)!.tone">{{ state(t.id)!.label }}</span>
           </div>
         </label>
       </div>
@@ -117,9 +129,9 @@ onMounted(() => {
             type="checkbox"
             role="switch"
             :checked="item.enabled"
-            :disabled="item.scope !== 'User' || launchItemBusy !== null"
-            :title="item.scope !== 'User' ? 'Géré par l\'administrateur' : undefined"
-            @change="setLaunchItem(item, ($event.target as HTMLInputElement).checked)"
+            :disabled="!item.editable || launchItemBusy !== null"
+            :title="lockReason(item)"
+            @change="toggleItem(item, $event)"
           />
         </label>
       </div>

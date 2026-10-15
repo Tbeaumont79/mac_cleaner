@@ -102,7 +102,8 @@ export interface LaunchItem {
   program: string | null;
   scope: "User" | "SystemAgent" | "SystemDaemon";
   enabled: boolean;
-  signature: Signature;
+  editable: boolean;
+  signature: Signature | null;
 }
 
 export interface TrashResult {

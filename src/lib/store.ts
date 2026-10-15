@@ -315,8 +315,8 @@ export const launchItemsLoaded = ref(false);
 export const launchItemBusy = ref<string | null>(null);
 export const speedError = ref<string | null>(null);
 
-// Recommandées par défaut : sans mot de passe ni effet de bord long.
-const DEFAULT_TASKS: TaskId[] = ["FlushDns", "RebuildLaunchServices", "ResetQuickLook"];
+// Présélection : rapide et sans mot de passe administrateur.
+const DEFAULT_TASKS: TaskId[] = ["ResetQuickLook"];
 
 export async function loadSpeed() {
   speedError.value = null;
@@ -358,8 +358,8 @@ export async function runSelectedTasks(): Promise<TaskResult[]> {
   }
 }
 
-export async function setLaunchItem(item: LaunchItem, enabled: boolean) {
-  if (launchItemBusy.value) return;
+export async function setLaunchItem(item: LaunchItem, enabled: boolean): Promise<boolean> {
+  if (launchItemBusy.value) return false;
   launchItemBusy.value = item.plist_path;
   speedError.value = null;
   try {
@@ -367,8 +367,10 @@ export async function setLaunchItem(item: LaunchItem, enabled: boolean) {
     launchItems.value = launchItems.value.map((i) =>
       i.plist_path === item.plist_path ? { ...i, enabled } : i,
     );
+    return true;
   } catch (e) {
     speedError.value = `${item.label} : ${e}`;
+    return false;
   } finally {
     launchItemBusy.value = null;
   }
