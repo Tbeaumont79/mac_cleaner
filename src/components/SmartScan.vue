@@ -52,7 +52,8 @@ const cleanedWell = computed(
     (cleanedBytes.value > 0 || tasksOk.value > 0) &&
     !smartSummary.value?.errors.length &&
     tasksFailed.value === 0 &&
-    !errorMessage.value,
+    !junkError.value &&
+    !speedError.value,
 );
 
 const junkPlanned = computed(() => smartPlan.value.junk.length > 0);
