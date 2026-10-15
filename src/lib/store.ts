@@ -2,6 +2,10 @@ import { computed, ref } from "vue";
 import {
   type AppInfo,
   type CategoryId,
+  type LaunchItem,
+  type MaintenanceTask,
+  type TaskId,
+  type TaskResult,
   type CategoryScan,
   type CleanResult,
   type DiskUsage,
@@ -12,13 +16,17 @@ import {
   diskUsage,
   findLargeFiles,
   listApps,
+  listLaunchItems,
+  listMaintenanceTasks,
+  runMaintenance,
+  setLaunchItemEnabled,
   formatBytes,
   scan,
   trashPaths,
   uninstallApps,
 } from "./api";
 
-export type View = "scan" | "junk" | "files" | "apps";
+export type View = "scan" | "junk" | "speed" | "files" | "apps";
 
 export const view = ref<View>("scan");
 
@@ -295,5 +303,75 @@ export async function uninstallSelectedApps(): Promise<UninstallResult[]> {
     appsUninstalling.value = false;
     void refreshDisk();
     if (junkScanned.value) void scanJunk();
+  }
+}
+
+export const tasks = ref<MaintenanceTask[]>([]);
+export const selectedTasks = ref<Set<TaskId>>(new Set());
+export const taskResults = ref<Map<TaskId, TaskResult>>(new Map());
+export const tasksRunning = ref(false);
+export const launchItems = ref<LaunchItem[]>([]);
+export const launchItemsLoaded = ref(false);
+export const launchItemBusy = ref<string | null>(null);
+export const speedError = ref<string | null>(null);
+
+// Présélection : rapide et sans mot de passe administrateur.
+const DEFAULT_TASKS: TaskId[] = ["ResetQuickLook"];
+
+export async function loadSpeed() {
+  speedError.value = null;
+  try {
+    const [list, items] = await Promise.all([listMaintenanceTasks(), listLaunchItems(false)]);
+    if (tasks.value.length === 0) {
+      selectedTasks.value = new Set(DEFAULT_TASKS.filter((id) => list.some((t) => t.id === id)));
+    }
+    tasks.value = list;
+    launchItems.value = items;
+    launchItemsLoaded.value = true;
+  } catch (e) {
+    speedError.value = String(e);
+  }
+}
+
+export function toggleTask(id: TaskId) {
+  const next = new Set(selectedTasks.value);
+  next.has(id) ? next.delete(id) : next.add(id);
+  selectedTasks.value = next;
+}
+
+export async function runSelectedTasks(): Promise<TaskResult[]> {
+  if (tasksRunning.value || selectedTasks.value.size === 0) return [];
+  tasksRunning.value = true;
+  speedError.value = null;
+  try {
+    const results = await runMaintenance([...selectedTasks.value]);
+    const next = new Map(taskResults.value);
+    for (const r of results) next.set(r.id, r);
+    taskResults.value = next;
+    selectedTasks.value = new Set(results.filter((r) => !r.ok).map((r) => r.id));
+    return results;
+  } catch (e) {
+    speedError.value = String(e);
+    return [];
+  } finally {
+    tasksRunning.value = false;
+  }
+}
+
+export async function setLaunchItem(item: LaunchItem, enabled: boolean): Promise<boolean> {
+  if (launchItemBusy.value) return false;
+  launchItemBusy.value = item.plist_path;
+  speedError.value = null;
+  try {
+    await setLaunchItemEnabled(item.plist_path, enabled);
+    launchItems.value = launchItems.value.map((i) =>
+      i.plist_path === item.plist_path ? { ...i, enabled } : i,
+    );
+    return true;
+  } catch (e) {
+    speedError.value = `${item.label} : ${e}`;
+    return false;
+  } finally {
+    launchItemBusy.value = null;
   }
 }

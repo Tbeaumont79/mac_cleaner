@@ -67,6 +67,45 @@ export interface UninstallResult {
   errors: string[];
 }
 
+export type TaskId =
+  | "FlushDns"
+  | "ReindexSpotlight"
+  | "PurgeMemory"
+  | "RebuildLaunchServices"
+  | "ResetQuickLook"
+  | "ClearFontCaches";
+
+export interface MaintenanceTask {
+  id: TaskId;
+  label: string;
+  description: string;
+  admin: boolean;
+}
+
+export interface TaskResult {
+  id: TaskId;
+  ok: boolean;
+  error: string | null;
+}
+
+export type Signature =
+  | { Trusted: { authority: string } }
+  | "AdHoc"
+  | "Unsigned"
+  | "Invalid"
+  | "Script"
+  | "ProgramMissing";
+
+export interface LaunchItem {
+  label: string;
+  plist_path: string;
+  program: string | null;
+  scope: "User" | "SystemAgent" | "SystemDaemon";
+  enabled: boolean;
+  editable: boolean;
+  signature: Signature | null;
+}
+
 export interface TrashResult {
   path: string;
   ok: boolean;
@@ -99,6 +138,22 @@ export function listApps(): Promise<AppInfo[]> {
 
 export function uninstallApps(paths: string[]): Promise<UninstallResult[]> {
   return invoke<UninstallResult[]>("uninstall_apps", { paths });
+}
+
+export function listMaintenanceTasks(): Promise<MaintenanceTask[]> {
+  return invoke<MaintenanceTask[]>("list_maintenance_tasks");
+}
+
+export function runMaintenance(ids: TaskId[]): Promise<TaskResult[]> {
+  return invoke<TaskResult[]>("run_maintenance", { ids });
+}
+
+export function listLaunchItems(withSignatures: boolean): Promise<LaunchItem[]> {
+  return invoke<LaunchItem[]>("list_launch_items", { withSignatures });
+}
+
+export function setLaunchItemEnabled(plistPath: string, enabled: boolean): Promise<void> {
+  return invoke<void>("set_launch_item_enabled", { plistPath, enabled });
 }
 
 export function diskUsage(): Promise<DiskUsage | null> {

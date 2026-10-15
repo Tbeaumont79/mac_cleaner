@@ -26,7 +26,7 @@ const modules = computed<NavItem[]>(() => [
     badge: junkScanned.value && junkTotal.value ? formatBytes(junkTotal.value) : "",
   },
   { id: null, icon: "prot", label: "Protection", badge: "Bientôt" },
-  { id: null, icon: "speed", label: "Performance", badge: "Bientôt" },
+  { id: "speed", icon: "speed", label: "Performance", badge: "" },
   { id: "apps", icon: "apps", label: "Applications", badge: "" },
   {
     id: "files",
