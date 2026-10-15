@@ -2,7 +2,9 @@ mod apps;
 mod cleaner;
 mod disk;
 mod guard;
+mod launchitems;
 mod largefiles;
+mod maintenance;
 mod scanner;
 mod targets;
 
@@ -55,6 +57,26 @@ async fn uninstall_apps(paths: Vec<String>) -> Vec<apps::UninstallResult> {
     apps::uninstall(paths)
 }
 
+#[tauri::command]
+async fn list_maintenance_tasks() -> Vec<maintenance::MaintenanceTask> {
+    maintenance::list()
+}
+
+#[tauri::command]
+async fn run_maintenance(ids: Vec<maintenance::TaskId>) -> Vec<maintenance::TaskResult> {
+    maintenance::run(ids)
+}
+
+#[tauri::command]
+async fn list_launch_items(with_signatures: bool) -> Vec<launchitems::LaunchItem> {
+    launchitems::list(with_signatures)
+}
+
+#[tauri::command]
+async fn set_launch_item_enabled(plist_path: String, enabled: bool) -> Result<(), String> {
+    launchitems::set_enabled(&plist_path, enabled)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -66,7 +88,11 @@ pub fn run() {
             trash_paths,
             disk_usage,
             list_apps,
-            uninstall_apps
+            uninstall_apps,
+            list_maintenance_tasks,
+            run_maintenance,
+            list_launch_items,
+            set_launch_item_enabled
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

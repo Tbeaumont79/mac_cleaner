@@ -4,12 +4,14 @@ import { refreshDisk, view } from "./lib/store";
 import AppSidebar from "./components/AppSidebar.vue";
 import JunkView from "./components/JunkView.vue";
 import AppsView from "./components/AppsView.vue";
+import PerformanceView from "./components/PerformanceView.vue";
 import LargeFilesView from "./components/LargeFilesView.vue";
 import SmartScan from "./components/SmartScan.vue";
 
 const TITLES = {
   scan: "Analyse intelligente",
   junk: "Nettoyage",
+  speed: "Performance",
   files: "Fichiers volumineux",
   apps: "Applications",
 };
@@ -24,6 +26,7 @@ onMounted(refreshDisk);
       <div class="titlebar" data-tauri-drag-region>{{ TITLES[view] }}</div>
       <SmartScan v-if="view === 'scan'" />
       <JunkView v-else-if="view === 'junk'" />
+      <PerformanceView v-else-if="view === 'speed'" />
       <LargeFilesView v-else-if="view === 'files'" />
       <AppsView v-else />
     </main>
