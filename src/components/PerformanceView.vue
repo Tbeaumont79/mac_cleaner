@@ -10,6 +10,7 @@ import {
   selectedTasks,
   setLaunchItem,
   speedError,
+  launchItemError,
   taskResults,
   tasks,
   tasksRunning,
@@ -88,6 +89,7 @@ onMounted(() => {
 
     <div class="view-body">
       <p v-if="speedError" class="error">{{ speedError }}</p>
+      <p v-if="launchItemError" class="error">{{ launchItemError }}</p>
 
       <div class="grid">
         <label v-for="t in tasks" :key="t.id" class="task">

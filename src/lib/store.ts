@@ -317,6 +317,7 @@ export const launchItems = ref<LaunchItem[]>([]);
 export const launchItemsLoaded = ref(false);
 export const launchItemBusy = ref<string | null>(null);
 export const speedError = ref<string | null>(null);
+export const launchItemError = ref<string | null>(null);
 
 // Présélection : rapide et sans mot de passe administrateur.
 const DEFAULT_TASKS: TaskId[] = ["ResetQuickLook"];
@@ -364,15 +365,15 @@ export async function runSelectedTasks(): Promise<TaskResult[]> {
 export async function setLaunchItem(item: LaunchItem, enabled: boolean): Promise<boolean> {
   if (launchItemBusy.value) return false;
   launchItemBusy.value = item.plist_path;
-  speedError.value = null;
+  launchItemError.value = null;
   try {
     await setLaunchItemEnabled(item.plist_path, enabled);
-    launchItems.value = launchItems.value.map((i) =>
-      i.plist_path === item.plist_path ? { ...i, enabled } : i,
-    );
+    const update = (i: LaunchItem) => (i.plist_path === item.plist_path ? { ...i, enabled } : i);
+    launchItems.value = launchItems.value.map(update);
+    signedItems.value = signedItems.value.map(update);
     return true;
   } catch (e) {
-    speedError.value = `${item.label} : ${e}`;
+    launchItemError.value = `${item.label} : ${e}`;
     return false;
   } finally {
     launchItemBusy.value = null;
@@ -387,12 +388,14 @@ export const protError = ref<string | null>(null);
 
 export interface SignatureInfo {
   label: string;
-  tone: "ok" | "warn" | "bad";
+  tone: "info" | "warn" | "bad";
 }
 
 export function signatureInfo(sig: Signature | null): SignatureInfo {
   if (sig === null) return { label: "Non analysé", tone: "warn" };
-  if (typeof sig === "object") return { label: sig.Trusted.authority.replace(/^Developer ID Application: /, ""), tone: "ok" };
+  // Un éditeur identifié n'est pas une garantie d'innocuité : ton neutre.
+  if (typeof sig === "object")
+    return { label: `Éditeur : ${sig.Trusted.authority.replace(/^Developer ID Application: /, "")}`, tone: "info" };
   switch (sig) {
     case "AdHoc":
       return { label: "Signature locale, éditeur non vérifié", tone: "warn" };
@@ -410,7 +413,14 @@ export function signatureInfo(sig: Signature | null): SignatureInfo {
 export const protIssues = computed(
   () =>
     checks.value.filter((c) => c.status === "Warning").length +
-    signedItems.value.filter((i) => signatureInfo(i.signature).tone === "bad").length,
+    signedItems.value.filter((i) => i.enabled && signatureInfo(i.signature).tone === "bad").length,
+);
+
+/// Points qu'on n'a pas pu vérifier ou qui méritent un coup d'œil sans être des problèmes.
+export const protUncertain = computed(
+  () =>
+    checks.value.filter((c) => c.status === "Unknown").length +
+    signedItems.value.filter((i) => i.enabled && signatureInfo(i.signature).tone === "warn").length,
 );
 
 let protScan: Promise<void> | null = null;

@@ -31,16 +31,16 @@ fn output(program: &str, args: &[&str]) -> Option<String> {
     Some(text)
 }
 
-fn from_output(text: Option<String>, on: &str, off: &str) -> Status {
+fn from_output(text: Option<String>, on: &[&str], off: &[&str]) -> Status {
     match text {
-        Some(t) if t.contains(on) => Status::Ok,
-        Some(t) if t.contains(off) => Status::Warning,
+        Some(t) if on.iter().any(|p| t.contains(p)) => Status::Ok,
+        Some(t) if off.iter().any(|p| t.contains(p)) => Status::Warning,
         _ => Status::Unknown,
     }
 }
 
 fn sip() -> Check {
-    let status = from_output(output("csrutil", &["status"]), "status: enabled", "status: disabled");
+    let status = from_output(output("csrutil", &["status"]), &["status: enabled"], &["status: disabled"]);
     Check {
         id: "sip",
         label: "Protection de l'intégrité du système",
@@ -55,7 +55,7 @@ fn sip() -> Check {
 }
 
 fn gatekeeper() -> Check {
-    let status = from_output(output("spctl", &["--status"]), "assessments enabled", "assessments disabled");
+    let status = from_output(output("spctl", &["--status"]), &["assessments enabled"], &["assessments disabled"]);
     Check {
         id: "gatekeeper",
         label: "Gatekeeper",
@@ -70,14 +70,14 @@ fn gatekeeper() -> Check {
 }
 
 fn filevault() -> Check {
-    let status = from_output(output("fdesetup", &["status"]), "FileVault is On", "FileVault is Off");
+    let status = from_output(output("fdesetup", &["status"]), &["FileVault is On"], &["FileVault is Off"]);
     Check {
         id: "filevault",
         label: "FileVault",
         detail: match status {
             Status::Ok => "Le disque est chiffré.".into(),
             Status::Warning => "Le disque n'est pas chiffré : tes données sont lisibles si le Mac est volé.".into(),
-            Status::Unknown => "État indisponible (chiffrement en cours ?).".into(),
+            Status::Unknown => "État indisponible.".into(),
         },
         status,
         settings_url: Some("x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?FileVault"),
@@ -87,8 +87,8 @@ fn filevault() -> Check {
 fn firewall() -> Check {
     let status = from_output(
         output("/usr/libexec/ApplicationFirewall/socketfilterfw", &["--getglobalstate"]),
-        "is enabled",
-        "is disabled",
+        &["is enabled", "is blocking all"],
+        &["is disabled"],
     );
     Check {
         id: "firewall",
@@ -104,7 +104,11 @@ fn firewall() -> Check {
 }
 
 const SOFTWARE_UPDATE_PLIST: &str = "/Library/Preferences/com.apple.SoftwareUpdate.plist";
-const XPROTECT_PLIST: &str = "/Library/Apple/System/Library/CoreServices/XProtect.bundle/Contents/Info.plist";
+// Depuis macOS 15, les mises à jour d'XProtect arrivent dans /private/var/protected.
+const XPROTECT_PLISTS: &[&str] = &[
+    "/Library/Apple/System/Library/CoreServices/XProtect.bundle/Contents/Info.plist",
+    "/private/var/protected/xprotect/XProtect.bundle/Contents/Info.plist",
+];
 const UPDATES_URL: &str = "x-apple.systempreferences:com.apple.Software-Update-Settings.extension";
 
 fn software_update_prefs() -> Option<plist::Dictionary> {
@@ -118,6 +122,26 @@ fn days_since(path: &Path) -> Option<u64> {
     Some(now.saturating_sub(then).as_secs() / 86_400)
 }
 
+/// Version la plus haute et mise à jour la plus récente parmi les copies d'XProtect.
+fn xprotect_info() -> Option<(u64, Option<u64>)> {
+    let copies: Vec<(u64, Option<u64>)> = XPROTECT_PLISTS
+        .iter()
+        .filter_map(|p| {
+            let version = plist::Value::from_file(p)
+                .ok()?
+                .as_dictionary()?
+                .get("CFBundleShortVersionString")?
+                .as_string()?
+                .parse()
+                .ok()?;
+            Some((version, days_since(Path::new(p))))
+        })
+        .collect();
+    let version = copies.iter().map(|c| c.0).max()?;
+    let days = copies.iter().filter_map(|c| c.1).min();
+    Some((version, days))
+}
+
 fn security_updates(prefs: Option<&plist::Dictionary>) -> Check {
     // Clé absente : macOS applique la valeur par défaut, c'est-à-dire activé.
     let enabled = |key: &str| {
@@ -127,15 +151,8 @@ fn security_updates(prefs: Option<&plist::Dictionary>) -> Check {
             .unwrap_or(true)
     };
     let on = enabled("CriticalUpdateInstall") && enabled("ConfigDataInstall");
-    let xprotect = plist::Value::from_file(XPROTECT_PLIST)
-        .ok()
-        .and_then(|v| {
-            v.as_dictionary()?
-                .get("CFBundleShortVersionString")?
-                .as_string()
-                .map(str::to_string)
-        })
-        .map(|version| match days_since(Path::new(XPROTECT_PLIST)) {
+    let xprotect = xprotect_info()
+        .map(|(version, days)| match days {
             Some(days) => format!(" XProtect {version}, mis à jour il y a {days} j."),
             None => format!(" XProtect {version}."),
         })
@@ -153,30 +170,64 @@ fn security_updates(prefs: Option<&plist::Dictionary>) -> Check {
     }
 }
 
-fn pending_updates(prefs: Option<&plist::Dictionary>) -> Check {
-    let names: Option<Vec<String>> = prefs.map(|p| {
-        p.get("RecommendedUpdates")
-            .and_then(|v| v.as_array())
-            .map(|list| {
-                list.iter()
-                    .filter_map(|u| u.as_dictionary()?.get("Display Name")?.as_string())
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default()
-    });
-    let (status, detail) = match names {
-        None => (Status::Unknown, "État indisponible.".to_string()),
-        Some(n) if n.is_empty() => (Status::Ok, "Le système est à jour.".to_string()),
-        Some(n) => (Status::Warning, format!("En attente : {}.", n.join(", "))),
-    };
-    Check {
+fn parse_version(v: &str) -> Vec<u64> {
+    v.split('.').map_while(|p| p.parse().ok()).collect()
+}
+
+/// Versions de macOS proposées, d'après les clés `MSU_UPDATE_<build>_patch_<version>_<type>`.
+fn offered_os_versions(prefs: &plist::Dictionary) -> Vec<String> {
+    prefs
+        .get("FirstOfferDateDictionary")
+        .and_then(|v| v.as_dictionary())
+        .map(|d| {
+            d.keys()
+                .filter_map(|k| k.split("_patch_").nth(1)?.split('_').next().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn pending_updates(prefs: Option<&plist::Dictionary>, current_os: Option<&str>) -> Check {
+    let check = |status, detail: String| Check {
         id: "pending_updates",
         label: "Mises à jour logicielles",
         status,
         detail,
         settings_url: Some(UPDATES_URL),
+    };
+    let (Some(prefs), Some(current)) = (prefs, current_os) else {
+        return check(Status::Unknown, "État indisponible.".into());
+    };
+    let current = parse_version(current);
+    let newer: Vec<Vec<u64>> = offered_os_versions(prefs)
+        .iter()
+        .map(|v| parse_version(v))
+        .filter(|v| !v.is_empty() && *v > current)
+        .collect();
+    // Les correctifs de la version installée sont des mises à jour de sécurité ;
+    // une nouvelle version majeure reste un choix.
+    let patch = newer.iter().filter(|v| v.first() == current.first()).max();
+    let major = newer.iter().filter(|v| v.first() > current.first()).max();
+    let fmt = |v: &Vec<u64>| v.iter().map(u64::to_string).collect::<Vec<_>>().join(".");
+
+    let mut pending: Vec<String> = patch.map(|v| format!("macOS {}", fmt(v))).into_iter().collect();
+    if let Some(apps) = prefs.get("RecommendedUpdates").and_then(|v| v.as_array()) {
+        pending.extend(
+            apps.iter()
+                .filter_map(|u| u.as_dictionary()?.get("Display Name")?.as_string())
+                .map(str::to_string),
+        );
     }
+    let major_note = major.map(|v| format!(" macOS {} est aussi disponible.", fmt(v))).unwrap_or_default();
+    if pending.is_empty() {
+        check(Status::Ok, format!("Aucune mise à jour en attente.{major_note}"))
+    } else {
+        check(Status::Warning, format!("En attente : {}.{major_note}", pending.join(", ")))
+    }
+}
+
+fn os_version() -> Option<String> {
+    output("sw_vers", &["-productVersion"]).map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
 pub fn checks() -> Vec<Check> {
@@ -187,7 +238,7 @@ pub fn checks() -> Vec<Check> {
         filevault(),
         firewall(),
         security_updates(prefs.as_ref()),
-        pending_updates(prefs.as_ref()),
+        pending_updates(prefs.as_ref(), os_version().as_deref()),
     ]
 }
 
@@ -197,9 +248,53 @@ mod tests {
 
     #[test]
     fn parses_command_output() {
-        assert_eq!(from_output(Some("Firewall is enabled. (State = 1)".into()), "is enabled", "is disabled"), Status::Ok);
-        assert_eq!(from_output(Some("Firewall is disabled. (State = 0)".into()), "is enabled", "is disabled"), Status::Warning);
-        assert_eq!(from_output(None, "a", "b"), Status::Unknown);
+        let on: &[&str] = &["is enabled", "is blocking all"];
+        let off: &[&str] = &["is disabled"];
+        assert_eq!(from_output(Some("Firewall is enabled. (State = 1)".into()), on, off), Status::Ok);
+        assert_eq!(
+            from_output(Some("Firewall is blocking all non-essential incoming connections. (State = 2)".into()), on, off),
+            Status::Ok
+        );
+        assert_eq!(from_output(Some("Firewall is disabled. (State = 0)".into()), on, off), Status::Warning);
+        assert_eq!(from_output(None, on, off), Status::Unknown);
+    }
+
+    fn prefs(keys: &[&str], apps: &[&str]) -> plist::Dictionary {
+        let mut offers = plist::Dictionary::new();
+        for k in keys {
+            offers.insert(k.to_string(), plist::Value::String("2026-09-14".into()));
+        }
+        let mut d = plist::Dictionary::new();
+        d.insert("FirstOfferDateDictionary".into(), plist::Value::Dictionary(offers));
+        let list = apps
+            .iter()
+            .map(|a| {
+                let mut u = plist::Dictionary::new();
+                u.insert("Display Name".into(), plist::Value::String(a.to_string()));
+                plist::Value::Dictionary(u)
+            })
+            .collect();
+        d.insert("RecommendedUpdates".into(), plist::Value::Array(list));
+        d
+    }
+
+    #[test]
+    fn detects_pending_os_patches() {
+        let p = prefs(
+            &["MSU_UPDATE_25G76_patch_26.6.1_minor", "MSU_UPDATE_25G241_patch_26.7.1_minor", "MSU_UPDATE_26A434_patch_27.0.1_major"],
+            &[],
+        );
+        let c = pending_updates(Some(&p), Some("26.5.2"));
+        assert_eq!(c.status, Status::Warning);
+        assert_eq!(c.detail, "En attente : macOS 26.7.1. macOS 27.0.1 est aussi disponible.");
+
+        let c = pending_updates(Some(&p), Some("26.7.1"));
+        assert_eq!(c.status, Status::Ok);
+
+        let c = pending_updates(Some(&prefs(&[], &["Safari"])), Some("26.7.1"));
+        assert_eq!(c.detail, "En attente : Safari.");
+
+        assert_eq!(pending_updates(None, Some("26.7.1")).status, Status::Unknown);
     }
 
     #[test]

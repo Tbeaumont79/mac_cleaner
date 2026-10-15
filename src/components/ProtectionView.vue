@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
-import { type LaunchItem, openSettings, revealInFinder } from "../lib/api";
+import { openSettings, revealInFinder } from "../lib/api";
 import {
   checks,
   launchItemBusy,
@@ -12,7 +12,8 @@ import {
   setLaunchItem,
   signatureInfo,
   signedItems,
-  speedError,
+  launchItemError,
+  protUncertain,
 } from "../lib/store";
 
 const STATUS = {
@@ -31,23 +32,17 @@ const headline = computed(() => {
   if (protScanning.value && !protScannedAt.value) return "Analyse en cours…";
   if (!protScannedAt.value) return "Pas encore analysé";
   const n = protIssues.value;
-  return n ? `${n} point${n > 1 ? "s" : ""} à vérifier` : "Ton Mac est bien protégé";
+  if (n) return `${n} point${n > 1 ? "s" : ""} à vérifier`;
+  return protUncertain.value ? "Aucun problème détecté" : "Défenses de macOS actives";
 });
 
 const sortedItems = computed(() => {
-  const rank = { bad: 0, warn: 1, ok: 2 };
+  const rank = { bad: 0, warn: 1, info: 2 };
   return [...signedItems.value].sort(
     (a, b) => rank[signatureInfo(a.signature).tone] - rank[signatureInfo(b.signature).tone],
   );
 });
 
-async function disable(item: LaunchItem) {
-  if (await setLaunchItem(item, false)) {
-    signedItems.value = signedItems.value.map((i) =>
-      i.plist_path === item.plist_path ? { ...i, enabled: false } : i,
-    );
-  }
-}
 
 onMounted(() => {
   if (!protScannedAt.value) scanProtection();
@@ -65,7 +60,7 @@ onMounted(() => {
 
     <div class="view-body">
       <p v-if="protError" class="error">{{ protError }}</p>
-      <p v-if="speedError" class="error">{{ speedError }}</p>
+      <p v-if="launchItemError" class="error">{{ launchItemError }}</p>
 
       <div class="hero">
         <div class="shield" :class="{ alert: protIssues > 0 && protScannedAt }">
@@ -77,7 +72,8 @@ onMounted(() => {
         </div>
         <div class="hero-text">
           <span class="headline">{{ headline }}</span>
-          <span class="muted">{{ lastScan ? `Dernière analyse : aujourd'hui, ${lastScan}` : "Sweep vérifie la configuration, il ne remplace pas un antivirus." }}</span>
+          <span v-if="lastScan" class="muted">Dernière analyse : aujourd'hui, {{ lastScan }}</span>
+          <span class="muted small">Sweep vérifie la configuration de macOS, il ne remplace pas un antivirus.</span>
         </div>
         <button type="button" class="btn-ghost" :disabled="protScanning" @click="scanProtection">
           {{ protScanning ? "Analyse…" : "Analyser maintenant" }}
@@ -118,11 +114,11 @@ onMounted(() => {
           </div>
           <button type="button" class="link" @click="revealInFinder(item.plist_path)">Afficher</button>
           <button
-            v-if="item.editable && item.enabled && signatureInfo(item.signature).tone !== 'ok'"
+            v-if="item.editable && item.enabled && signatureInfo(item.signature).tone !== 'info'"
             type="button"
             class="link"
             :disabled="launchItemBusy !== null"
-            @click="disable(item)"
+            @click="setLaunchItem(item, false)"
           >
             Désactiver
           </button>
@@ -228,6 +224,13 @@ onMounted(() => {
   font-size: 12px;
   font-weight: 700;
   flex-shrink: 0;
+}
+.small {
+  font-size: 12px;
+}
+.pill.info {
+  color: var(--text-soft);
+  background: var(--surface-strong);
 }
 .pill.ok {
   color: var(--success);
