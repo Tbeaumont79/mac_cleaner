@@ -331,17 +331,18 @@ fn remove_as_admin(path: &Path) -> Result<(), String> {
 /// droits (bundle root, fichiers root ajoutés par un updater, protection macOS)
 /// bascule sur la suppression administrateur.
 fn remove_app(path: &Path) -> Result<(), String> {
-    let name = path.file_name().ok_or_else(|| "chemin invalide".to_string())?;
-    let staged = path.with_file_name(format!(".{}.sweep-delete-{}", name.to_string_lossy(), std::process::id()));
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    // Nom court et indépendant du nom de l'app : jamais trop long, jamais en collision.
+    let staged = path.with_file_name(format!(".sweep-delete-{}-{nanos}", std::process::id()));
     let removed = match std::fs::rename(path, &staged) {
-        Ok(()) => {
-            let res = remove_permanently(&staged).or_else(|_| remove_as_admin(&staged));
+        Ok(()) => match remove_permanently(&staged).or_else(|_| remove_as_admin(&staged)) {
+            Ok(()) => Ok(()),
             // En cas d'échec, l'app ne doit pas rester cachée sous son nom temporaire.
-            if res.is_err() {
-                let _ = std::fs::rename(&staged, path);
-            }
-            res
-        }
+            Err(e) => Err(match std::fs::rename(&staged, path) {
+                Ok(()) => format!("{e}. L'app a pu être partiellement supprimée : relance la désinstallation."),
+                Err(_) => format!("{e}. Restes de l'app dans {}", staged.display()),
+            }),
+        },
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => remove_as_admin(path),
         Err(e) => Err(e.to_string()),
     };
