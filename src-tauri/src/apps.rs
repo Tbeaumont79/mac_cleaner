@@ -135,7 +135,9 @@ fn leftovers_for(home: &Path, bundle: &Bundle, installed: &[Bundle]) -> Vec<Path
     if let Ok(read) = std::fs::read_dir(lib.join("Group Containers")) {
         let suffix = format!(".{id}");
         for entry in read.filter_map(Result::ok) {
-            if entry.file_name().to_string_lossy().ends_with(&suffix) {
+            // TEAMID.<id> ou group.<id> : un préfixe à points désignerait une autre app.
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.strip_suffix(&suffix).is_some_and(|prefix| !prefix.is_empty() && !prefix.contains('.')) {
                 candidates.push(entry.path());
             }
         }
