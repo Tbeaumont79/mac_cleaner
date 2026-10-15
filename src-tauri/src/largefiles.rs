@@ -2,14 +2,16 @@
 //!
 //! Parcourt récursivement `~`, retient les fichiers dont la taille dépasse un
 //! seuil, et renvoie les plus gros (triés par taille décroissante). On ne suit
-//! pas les liens symboliques et on saute la corbeille (déjà « supprimée »).
+//! pas les liens symboliques et on saute les zones protégées (`guard`).
 //!
-//! Aucune écriture : la suppression éventuelle passe par `cleaner::trash_path`.
+//! Aucune écriture : la suppression éventuelle passe par `cleaner::trash_paths`.
 
 use std::time::SystemTime;
 
 use serde::Serialize;
 use walkdir::WalkDir;
+
+use crate::guard;
 
 /// Nombre maximum de fichiers renvoyés (les plus gros).
 const MAX_RESULTS: usize = 200;
@@ -30,7 +32,6 @@ pub fn find(min_bytes: u64) -> Vec<LargeFile> {
     let Some(home) = dirs::home_dir() else {
         return Vec::new();
     };
-    let trash = home.join(".Trash");
     let now = SystemTime::now();
 
     let mut found: Vec<LargeFile> = Vec::new();
@@ -38,8 +39,7 @@ pub fn find(min_bytes: u64) -> Vec<LargeFile> {
     let walker = WalkDir::new(&home)
         .follow_links(false)
         .into_iter()
-        // Ne pas descendre dans la corbeille.
-        .filter_entry(|e| e.path() != trash);
+        .filter_entry(|e| !(e.file_type().is_dir() && guard::is_protected_dir(&home, e.path())));
 
     for entry in walker.filter_map(Result::ok) {
         if !entry.file_type().is_file() {
@@ -66,12 +66,12 @@ pub fn find(min_bytes: u64) -> Vec<LargeFile> {
         });
     }
 
-    found.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    found.sort_by_key(|f| std::cmp::Reverse(f.size_bytes));
     found.truncate(MAX_RESULTS);
     found
 }
 
 /// Convertit un seuil en mégaoctets vers des octets.
 pub fn mb_to_bytes(mb: u64) -> u64 {
-    mb.saturating_mul(1024 * 1024)
+    mb.saturating_mul(1_000_000)
 }

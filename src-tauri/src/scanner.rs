@@ -23,6 +23,8 @@ pub struct CategoryScan {
     pub exists: bool,
     /// `true` si le nettoyage est définitif (pas la corbeille).
     pub permanent: bool,
+    /// `true` si macOS a refusé la lecture d'au moins un dossier (Accès complet au disque).
+    pub access_denied: bool,
 }
 
 /// Scanne toutes les catégories et renvoie un rapport par catégorie.
@@ -40,10 +42,14 @@ fn scan_category(cat: &Category) -> CategoryScan {
     let mut size_bytes: u64 = 0;
     let mut file_count: u64 = 0;
     let mut exists = false;
+    let mut access_denied = targets::containers_denied(cat);
 
     for path in targets::resolved_paths(cat) {
         if path.exists() {
             exists = true;
+        }
+        if let Err(e) = std::fs::read_dir(&path) {
+            access_denied |= e.kind() == std::io::ErrorKind::PermissionDenied;
         }
         for entry in WalkDir::new(&path).into_iter().filter_map(Result::ok) {
             if entry.file_type().is_file() {
@@ -63,5 +69,6 @@ fn scan_category(cat: &Category) -> CategoryScan {
         file_count,
         exists,
         permanent: cat.permanent,
+        access_denied,
     }
 }

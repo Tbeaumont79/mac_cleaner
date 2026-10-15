@@ -90,7 +90,7 @@ pub fn categories() -> &'static [Category] {
         Category {
             id: CategoryId::Trash,
             label: "Corbeille",
-            description: "Vide la corbeille. ⚠️ Suppression définitive.",
+            description: "Vide la corbeille, sans retour possible.",
             paths: &[PathSpec::Home(".Trash")],
             permanent: true,
         },
@@ -100,6 +100,16 @@ pub fn categories() -> &'static [Category] {
 /// Retrouve une catégorie par son identifiant.
 pub fn find(id: CategoryId) -> Option<&'static Category> {
     categories().iter().find(|c| c.id == id)
+}
+
+/// `true` si la catégorie dépend de `~/Library/Containers` et que macOS en refuse la lecture.
+pub fn containers_denied(cat: &Category) -> bool {
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+    cat.paths.iter().any(|spec| matches!(spec, PathSpec::ContainerEach(_)))
+        && std::fs::read_dir(home.join("Library/Containers"))
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied)
 }
 
 /// Résout les chemins absolus d'une catégorie sous le `$HOME` de l'utilisateur.
