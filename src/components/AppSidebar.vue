@@ -25,15 +25,15 @@ const modules = computed<NavItem[]>(() => [
     label: "Nettoyage",
     badge: junkScanned.value && junkTotal.value ? formatBytes(junkTotal.value) : "",
   },
+  { id: null, icon: "prot", label: "Protection", badge: "Bientôt" },
+  { id: null, icon: "speed", label: "Performance", badge: "Bientôt" },
+  { id: "apps", icon: "apps", label: "Applications", badge: "" },
   {
     id: "files",
     icon: "files",
     label: "Fichiers volumineux",
     badge: "",
   },
-  { id: null, icon: "prot", label: "Protection", badge: "Bientôt" },
-  { id: null, icon: "speed", label: "Performance", badge: "Bientôt" },
-  { id: null, icon: "apps", label: "Applications", badge: "Bientôt" },
 ]);
 
 const diskStats = computed(() => {

@@ -16,7 +16,7 @@ use serde::Serialize;
 use crate::guard;
 use crate::targets::{self, CategoryId};
 
-const OWN_BUNDLE_ID: &str = "com.thibaultbeaumont.mac-cleaner";
+pub(crate) const OWN_BUNDLE_ID: &str = "com.thibaultbeaumont.mac-cleaner";
 
 /// Bilan d'un nettoyage de catégorie.
 #[derive(Debug, Serialize)]
@@ -149,7 +149,7 @@ fn trash_one_path(path: &str) -> Result<(), String> {
 
 // Finder (méthode par défaut du crate) exige l'autorisation d'automatisation,
 // lance un AppleScript par élément et refuse les liens symboliques.
-fn move_to_trash(path: &Path) -> Result<(), String> {
+pub(crate) fn move_to_trash(path: &Path) -> Result<(), String> {
     let mut ctx = trash::TrashContext::default();
     #[cfg(target_os = "macos")]
     {
@@ -157,6 +157,12 @@ fn move_to_trash(path: &Path) -> Result<(), String> {
         ctx.set_delete_method(DeleteMethod::NsFileManager);
     }
     ctx.delete(path).map_err(|e| e.to_string())
+}
+
+/// Passe par Finder, qui sait demander le mot de passe administrateur
+/// (apps installées par root, App Store). Réservé aux bundles d'apps.
+pub(crate) fn move_to_trash_as_admin(path: &Path) -> Result<(), String> {
+    trash::delete(path).map_err(|e| e.to_string())
 }
 
 /// Supprime **définitivement** un fichier ou un dossier.
@@ -175,7 +181,7 @@ fn remove_permanently(path: &std::path::Path) -> Result<(), String> {
 }
 
 /// Taille d'un fichier ou d'un dossier (récursif), best-effort.
-fn dir_size(path: &std::path::Path) -> u64 {
+pub(crate) fn dir_size(path: &std::path::Path) -> u64 {
     use walkdir::WalkDir;
     let mut total = 0u64;
     for entry in WalkDir::new(path).follow_root_links(false).into_iter().filter_map(Result::ok) {

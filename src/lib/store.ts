@@ -1,20 +1,24 @@
 import { computed, ref } from "vue";
 import {
+  type AppInfo,
   type CategoryId,
   type CategoryScan,
   type CleanResult,
   type DiskUsage,
   type LargeFile,
   type TrashResult,
+  type UninstallResult,
   clean,
   diskUsage,
   findLargeFiles,
+  listApps,
   formatBytes,
   scan,
   trashPaths,
+  uninstallApps,
 } from "./api";
 
-export type View = "scan" | "junk" | "files";
+export type View = "scan" | "junk" | "files" | "apps";
 
 export const view = ref<View>("scan");
 
@@ -228,4 +232,68 @@ export function describeClean(s: CleanSummary): string {
   if (s.deletedBytes > 0) parts.push(`${formatBytes(s.deletedBytes)} supprimés définitivement`);
   if (s.errors.length) parts.push(`${s.errors.length} élément(s) ignoré(s)`);
   return parts.length ? parts.join(" · ") : "Rien n'a été déplacé";
+}
+
+export const apps = ref<AppInfo[]>([]);
+export const selectedApps = ref<Set<string>>(new Set());
+export const appsLoading = ref(false);
+export const appsLoaded = ref(false);
+export const appsUninstalling = ref(false);
+export const appsError = ref<string | null>(null);
+
+export const appBytes = (a: AppInfo) => a.app_bytes + a.leftover_bytes;
+
+export const selectedAppsBytes = computed(() =>
+  apps.value.filter((a) => selectedApps.value.has(a.path)).reduce((sum, a) => sum + appBytes(a), 0),
+);
+
+let appsLoad: Promise<void> | null = null;
+
+export function loadApps(): Promise<void> {
+  appsLoad ??= doLoadApps().finally(() => (appsLoad = null));
+  return appsLoad;
+}
+
+async function doLoadApps() {
+  appsLoading.value = true;
+  appsError.value = null;
+  try {
+    apps.value = (await listApps()).sort((a, b) => appBytes(b) - appBytes(a));
+    const present = new Set(apps.value.filter((a) => !a.running).map((a) => a.path));
+    selectedApps.value = new Set([...selectedApps.value].filter((p) => present.has(p)));
+    appsLoaded.value = true;
+  } catch (e) {
+    appsError.value = String(e);
+  } finally {
+    appsLoading.value = false;
+  }
+}
+
+export function toggleApp(path: string) {
+  appsError.value = null;
+  const next = new Set(selectedApps.value);
+  next.has(path) ? next.delete(path) : next.add(path);
+  selectedApps.value = next;
+}
+
+export async function uninstallSelectedApps(): Promise<UninstallResult[]> {
+  if (appsUninstalling.value || appsLoading.value || selectedApps.value.size === 0) return [];
+  appsUninstalling.value = true;
+  appsError.value = null;
+  try {
+    const results = await uninstallApps([...selectedApps.value]);
+    const removed = new Set(results.filter((r) => r.ok).map((r) => r.path));
+    apps.value = apps.value.filter((a) => !removed.has(a.path));
+    selectedApps.value = new Set([...selectedApps.value].filter((p) => !removed.has(p)));
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length) appsError.value = failed.map((r) => r.errors[0] ?? r.path).join(" · ");
+    return results;
+  } catch (e) {
+    appsError.value = String(e);
+    return [];
+  } finally {
+    appsUninstalling.value = false;
+    void refreshDisk();
+    if (junkScanned.value) void scanJunk();
+  }
 }
