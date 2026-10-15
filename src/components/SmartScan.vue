@@ -8,6 +8,8 @@ import {
   largeFiles,
   largeFilesTotal,
   filesError,
+  junkCleaning,
+  junkScanning,
   junkError,
   runSmartClean,
   runSmartScan,
@@ -174,7 +176,13 @@ async function confirmClean() {
     <p class="sub">{{ subtitle }}</p>
     <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
 
-    <button v-if="mainButton" type="button" class="main-btn" @click="mainButton.run">
+    <button
+      v-if="mainButton"
+      type="button"
+      class="main-btn"
+      :disabled="junkScanning || junkCleaning"
+      @click="mainButton.run"
+    >
       {{ mainButton.label }}
     </button>
 

@@ -30,6 +30,9 @@ export async function refreshDisk() {
 
 export const categories = ref<CategoryScan[]>([]);
 export const selectedCategories = ref<Set<CategoryId>>(new Set());
+// Choix explicites de l'utilisateur, pour qu'une catégorie vidée revienne
+// cochée quand elle se remplit à nouveau.
+const categoryChoices = new Map<CategoryId, boolean>();
 export const junkScanning = ref(false);
 export const junkCleaning = ref(false);
 export const junkScanned = ref(false);
@@ -62,13 +65,11 @@ async function doScanJunk() {
   junkScanning.value = true;
   junkError.value = null;
   try {
-    const firstScan = !junkScanned.value;
-    const previous = selectedCategories.value;
     categories.value = await scan();
     // La corbeille est définitive : jamais présélectionnée.
     selectedCategories.value = new Set(
       categories.value
-        .filter((c) => c.size_bytes > 0 && (firstScan ? !c.permanent : previous.has(c.id)))
+        .filter((c) => c.size_bytes > 0 && (categoryChoices.get(c.id) ?? !c.permanent))
         .map((c) => c.id),
     );
     junkScanned.value = true;
@@ -82,6 +83,7 @@ async function doScanJunk() {
 export function toggleCategory(id: CategoryId) {
   const next = new Set(selectedCategories.value);
   next.has(id) ? next.delete(id) : next.add(id);
+  categoryChoices.set(id, next.has(id));
   selectedCategories.value = next;
 }
 
@@ -169,6 +171,19 @@ export async function trashSelectedFiles(): Promise<TrashResult[]> {
   filesTrashing.value = true;
   filesError.value = null;
   try {
+    return await doTrashSelectedFiles();
+  } catch (e) {
+    filesError.value = String(e);
+    return [];
+  } finally {
+    filesTrashing.value = false;
+    // La corbeille vient de grossir : sa taille affichée doit suivre.
+    if (junkScanned.value) void scanJunk();
+  }
+}
+
+async function doTrashSelectedFiles(): Promise<TrashResult[]> {
+  {
     const results = await trashPaths([...selectedFiles.value]);
     const ok = new Set(results.filter((r) => r.ok).map((r) => r.path));
     largeFiles.value = largeFiles.value.filter((f) => !ok.has(f.path));
@@ -177,14 +192,7 @@ export async function trashSelectedFiles(): Promise<TrashResult[]> {
     if (failed.length) {
       filesError.value = `${failed.length} fichier(s) non déplacé(s) : ${failed[0].error ?? ""}`;
     }
-    // La corbeille vient de grossir : sa taille affichée doit suivre.
-    if (junkScanned.value) await scanJunk();
     return results;
-  } catch (e) {
-    filesError.value = String(e);
-    return [];
-  } finally {
-    filesTrashing.value = false;
   }
 }
 

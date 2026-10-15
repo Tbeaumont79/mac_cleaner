@@ -48,6 +48,10 @@ pub fn clean_category(id: CategoryId) -> Result<CleanResult, String> {
             Ok(r) => r,
             Err(_) => continue,
         };
+        // Revérifie juste avant d'agir que le dossier n'a pas été remplacé par un lien.
+        if !std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+            continue;
+        }
 
         for entry in read.filter_map(Result::ok) {
             // Vider son propre cache casserait la webview en cours d'exécution.
