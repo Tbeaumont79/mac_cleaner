@@ -331,6 +331,8 @@ export async function uninstallSelectedApps(): Promise<UninstallResult[]> {
   } finally {
     appsUninstalling.value = false;
     void refreshDisk();
+    // Les fichiers associés supprimés venaient en partie des caches et logs.
+    if (junkScanned.value) void scanJunk();
   }
 }
 

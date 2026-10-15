@@ -303,18 +303,6 @@ fn validate(path: &str) -> Result<Bundle, String> {
     Ok(bundle)
 }
 
-/// L'app est-elle dans un dossier où l'on ne peut pas écrire (installée par
-/// root, App Store) ? Seul ce cas justifie de demander le mot de passe.
-fn needs_admin(path: &Path) -> bool {
-    use std::os::unix::ffi::OsStrExt;
-    let not_writable = |p: &Path| {
-        std::ffi::CString::new(p.as_os_str().as_bytes())
-            .map(|c| unsafe { libc::access(c.as_ptr(), libc::W_OK) } != 0)
-            .unwrap_or(false)
-    };
-    not_writable(path) || path.parent().is_some_and(not_writable)
-}
-
 /// `rm -rf` en root sur un chemin déjà validé par `validate` (bundle .app direct
 /// de /Applications ou ~/Applications). `rm` ne suit pas les liens symboliques.
 fn remove_as_admin(path: &Path) -> Result<(), String> {
@@ -338,16 +326,31 @@ fn remove_as_admin(path: &Path) -> Result<(), String> {
     })
 }
 
+/// Renomme d'abord le bundle (atomique) pour qu'un échec en cours de suppression
+/// ne laisse jamais une app à moitié effacée à son emplacement. Tout refus de
+/// droits (bundle root, fichiers root ajoutés par un updater, protection macOS)
+/// bascule sur la suppression administrateur.
 fn remove_app(path: &Path) -> Result<(), String> {
-    if needs_admin(path) {
-        remove_as_admin(path)?;
-    } else {
-        remove_permanently(path)?;
+    let name = path.file_name().ok_or_else(|| "chemin invalide".to_string())?;
+    let staged = path.with_file_name(format!(".{}.sweep-delete-{}", name.to_string_lossy(), std::process::id()));
+    let removed = match std::fs::rename(path, &staged) {
+        Ok(()) => {
+            let res = remove_permanently(&staged).or_else(|_| remove_as_admin(&staged));
+            // En cas d'échec, l'app ne doit pas rester cachée sous son nom temporaire.
+            if res.is_err() {
+                let _ = std::fs::rename(&staged, path);
+            }
+            res
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => remove_as_admin(path),
+        Err(e) => Err(e.to_string()),
+    };
+    let leftover = [path, staged.as_path()].into_iter().find(|p| std::fs::symlink_metadata(p).is_ok());
+    match (removed, leftover) {
+        (Ok(()), None) => Ok(()),
+        (Err(e), _) => Err(e),
+        (Ok(()), Some(p)) => Err(format!("{} n'a pas pu être entièrement supprimé", p.display())),
     }
-    if std::fs::symlink_metadata(path).is_ok() {
-        return Err("l'app n'a pas pu être entièrement supprimée".to_string());
-    }
-    Ok(())
 }
 
 pub fn uninstall(paths: Vec<String>) -> Vec<UninstallResult> {
