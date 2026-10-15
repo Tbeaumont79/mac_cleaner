@@ -1,6 +1,6 @@
 [package]
 name = "mac-cleaner"
-version = "0.1.0"
+version = "1.0.0"
 description = "Un cleaner Mac simple et sûr"
 authors = ["Thibault Beaumont"]
 edition = "2021"

@@ -217,24 +217,34 @@ async function doTrashSelectedFiles(): Promise<TrashResult[]> {
 export type SmartPhase = "idle" | "scanning" | "results" | "cleaning" | "cleaned";
 
 export const smartPhase = ref<SmartPhase>("idle");
-export const smartStep = ref<"junk" | "files">("junk");
+export type SmartStep = "junk" | "prot" | "speed";
+
+export const smartStep = ref<SmartStep>("junk");
 export const smartSummary = ref<CleanSummary | null>(null);
+export const smartTaskResults = ref<TaskResult[]>([]);
 
 export async function runSmartScan() {
   if (smartPhase.value === "scanning" || smartPhase.value === "cleaning") return;
   smartPhase.value = "scanning";
+  smartSummary.value = null;
+  smartTaskResults.value = [];
   smartStep.value = "junk";
   await scanJunk();
-  smartStep.value = "files";
-  await scanLargeFiles();
+  smartStep.value = "prot";
+  await scanProtection();
+  smartStep.value = "speed";
+  await loadSpeed();
   smartPhase.value = "results";
 }
 
+/** Nettoie la sélection puis exécute les tâches de maintenance choisies. */
 export async function runSmartClean() {
   if (smartPhase.value !== "results") return;
   smartPhase.value = "cleaning";
-  smartSummary.value = await cleanSelected();
-  smartPhase.value = smartSummary.value ? "cleaned" : "results";
+  smartSummary.value = selectedJunk.value.length ? await cleanSelected() : null;
+  smartTaskResults.value = await runSelectedTasks();
+  const didSomething = smartSummary.value !== null || smartTaskResults.value.length > 0;
+  smartPhase.value = didSomething ? "cleaned" : "results";
 }
 
 export function describeClean(s: CleanSummary): string {

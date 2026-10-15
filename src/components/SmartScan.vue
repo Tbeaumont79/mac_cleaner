@@ -3,26 +3,33 @@ import { computed, ref } from "vue";
 import { formatBytes } from "../lib/api";
 import { ICONS, type IconName } from "../lib/icons";
 import {
+  type SmartStep,
   type View,
   describeClean,
-  largeFiles,
-  largeFilesTotal,
-  filesError,
   junkCleaning,
-  junkScanning,
   junkError,
+  junkScanning,
+  protError,
+  protIssues,
+  protScanning,
+  protUncertain,
   runSmartClean,
   runSmartScan,
-  scannedMinMb,
+  selectedJunk,
   selectedJunkBytes,
+  selectedTasks,
   smartPhase,
   smartStep,
   smartSummary,
-  trashCategory,
+  smartTaskResults,
+  speedError,
+  tasksRunning,
   view,
 } from "../lib/store";
 import CleanConfirm from "./CleanConfirm.vue";
 import IconTile from "./IconTile.vue";
+
+const STEPS: SmartStep[] = ["junk", "prot", "speed"];
 
 const confirmOpen = ref(false);
 
@@ -33,6 +40,18 @@ const orbIcon = computed(() =>
 const cleanedBytes = computed(() =>
   smartSummary.value ? smartSummary.value.trashedBytes + smartSummary.value.deletedBytes : 0,
 );
+
+const tasksOk = computed(() => smartTaskResults.value.filter((r) => r.ok).length);
+const tasksFailed = computed(() => smartTaskResults.value.length - tasksOk.value);
+
+const cleanedWell = computed(
+  () =>
+    (cleanedBytes.value > 0 || tasksOk.value > 0) &&
+    !smartSummary.value?.errors.length &&
+    tasksFailed.value === 0,
+);
+
+const hasWork = computed(() => selectedJunk.value.length > 0 || selectedTasks.value.size > 0);
 
 const title = computed(
   () =>
@@ -45,31 +64,36 @@ const title = computed(
     })[smartPhase.value],
 );
 
-const cleanedWell = computed(
-  () => !!smartSummary.value && cleanedBytes.value > 0 && smartSummary.value.errors.length === 0,
-);
-
-const errorMessage = computed(() => junkError.value ?? filesError.value);
+const errorMessage = computed(() => junkError.value ?? protError.value ?? speedError.value);
 
 const subtitle = computed(() => {
   switch (smartPhase.value) {
     case "idle":
-      return "Une seule analyse pour les déchets système et les fichiers volumineux de ton Mac.";
+      return "Une seule analyse pour les déchets, la protection et les performances de ton Mac.";
     case "scanning":
-      return smartStep.value === "junk"
-        ? "Recherche des fichiers inutiles…"
-        : "Recherche des fichiers volumineux…";
+      return {
+        junk: "Recherche des fichiers inutiles…",
+        prot: "Vérification des défenses de macOS…",
+        speed: "Analyse des performances…",
+      }[smartStep.value];
     case "results":
-      return selectedJunkBytes.value
-        ? "Vérifie le détail de chaque module ou nettoie la sélection en un clic."
-        : "Rien à nettoyer dans la sélection actuelle.";
+      return hasWork.value
+        ? "Vérifie le détail de chaque module ou lance tout en un clic."
+        : "Rien à faire avec la sélection actuelle.";
     case "cleaning":
-      return "Déplacement des fichiers vers la corbeille…";
+      return junkCleaning.value ? "Déplacement des fichiers vers la corbeille…" : "Exécution des tâches de maintenance…";
     case "cleaned": {
-      const s = smartSummary.value;
-      if (!s) return "";
-      const hint = s.trashedBytes > 0 ? ". Vide la corbeille pour récupérer l'espace disque." : ".";
-      return describeClean(s) + hint;
+      const parts: string[] = [];
+      if (smartSummary.value) parts.push(describeClean(smartSummary.value));
+      if (smartTaskResults.value.length) {
+        parts.push(
+          tasksFailed.value
+            ? `${tasksOk.value} sur ${smartTaskResults.value.length} tâches exécutées`
+            : `${tasksOk.value} tâche${tasksOk.value > 1 ? "s" : ""} exécutée${tasksOk.value > 1 ? "s" : ""}`,
+        );
+      }
+      const hint = smartSummary.value?.trashedBytes ? ". Vide la corbeille pour récupérer l'espace disque." : ".";
+      return parts.join(" · ") + hint;
     }
   }
 });
@@ -79,8 +103,8 @@ const mainButton = computed(() => {
     case "idle":
       return { label: "Analyser", run: runSmartScan };
     case "results":
-      return selectedJunkBytes.value
-        ? { label: "Nettoyer", run: () => (confirmOpen.value = true) }
+      return hasWork.value
+        ? { label: "Lancer", run: () => (confirmOpen.value = true) }
         : { label: "Nouvelle analyse", run: runSmartScan };
     case "cleaned":
       return { label: "Nouvelle analyse", run: runSmartScan };
@@ -89,15 +113,20 @@ const mainButton = computed(() => {
   }
 });
 
-function moduleStatus(step: "junk" | "files", result: string): string {
+const busy = computed(() => junkScanning.value || junkCleaning.value || protScanning.value || tasksRunning.value);
+
+function moduleStatus(step: SmartStep, result: string): string {
   switch (smartPhase.value) {
     case "idle":
       return "Prêt";
-    case "scanning":
-      if (step === smartStep.value) return "Analyse en cours…";
-      return step === "junk" ? "Terminé" : "En attente";
+    case "scanning": {
+      const current = STEPS.indexOf(smartStep.value);
+      const mine = STEPS.indexOf(step);
+      if (mine === current) return "Analyse en cours…";
+      return mine < current ? "Terminé" : "En attente";
+    }
     case "cleaning":
-      return step === "junk" ? "En cours…" : result;
+      return step === "prot" ? result : "En cours…";
     default:
       return result;
   }
@@ -111,8 +140,8 @@ interface ModuleCard {
 }
 
 const modules = computed<ModuleCard[]>(() => {
-  const trash = trashCategory.value?.size_bytes ?? 0;
-  const files = largeFiles.value.length;
+  const n = selectedTasks.value.size;
+  const issues = protIssues.value;
   return [
     {
       icon: "junk",
@@ -121,21 +150,28 @@ const modules = computed<ModuleCard[]>(() => {
       target: "junk",
     },
     {
-      icon: "files",
-      name: "Fichiers volumineux",
+      icon: "prot",
+      name: "Protection",
       status: moduleStatus(
-        "files",
-        files
-          ? `${files} fichier${files > 1 ? "s" : ""} · ${formatBytes(largeFilesTotal.value)}`
-          : `Aucun au-delà de ${formatBytes(scannedMinMb.value * 1_000_000)}`,
+        "prot",
+        issues
+          ? `${issues} point${issues > 1 ? "s" : ""} à vérifier`
+          : protUncertain.value
+            ? "Aucun problème détecté"
+            : "Défenses actives",
       ),
-      target: "files",
+      target: "prot",
     },
     {
-      icon: "trash",
-      name: "Corbeille",
-      status: moduleStatus("junk", trash ? `${formatBytes(trash)} à vider` : "Vide"),
-      target: "junk",
+      icon: "speed",
+      name: "Performance",
+      status: moduleStatus(
+        "speed",
+        smartPhase.value === "cleaned"
+          ? `${tasksOk.value} tâche${tasksOk.value > 1 ? "s" : ""} exécutée${tasksOk.value > 1 ? "s" : ""}`
+          : `${n} tâche${n > 1 ? "s" : ""} sélectionnée${n > 1 ? "s" : ""}`,
+      ),
+      target: "speed",
     },
   ];
 });
@@ -180,7 +216,7 @@ async function confirmClean() {
       v-if="mainButton"
       type="button"
       class="main-btn"
-      :disabled="junkScanning || junkCleaning"
+      :disabled="busy"
       @click="mainButton.run"
     >
       {{ mainButton.label }}
@@ -202,7 +238,7 @@ async function confirmClean() {
       </button>
     </div>
 
-    <CleanConfirm v-if="confirmOpen" @confirm="confirmClean" @cancel="confirmOpen = false" />
+    <CleanConfirm v-if="confirmOpen" with-tasks @confirm="confirmClean" @cancel="confirmOpen = false" />
   </div>
 </template>
 
