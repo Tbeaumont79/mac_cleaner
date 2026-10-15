@@ -1,5 +1,5 @@
 //! Désinstallateur : liste les apps de /Applications et ~/Applications et
-//! met à la corbeille une app avec ses fichiers associés dans ~/Library.
+//! supprime définitivement une app avec ses fichiers associés dans ~/Library.
 //!
 //! Le frontend n'envoie que le chemin du bundle ; il est revalidé ici et les
 //! fichiers associés sont toujours recalculés côté Rust à partir de l'identifiant
@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use crate::cleaner::{dir_size, move_to_trash, move_to_trash_as_admin, OWN_BUNDLE_ID};
+use crate::cleaner::{dir_size, remove_permanently, OWN_BUNDLE_ID};
 
 #[derive(Debug, Serialize)]
 pub struct Leftover {
@@ -304,7 +304,7 @@ fn validate(path: &str) -> Result<Bundle, String> {
 }
 
 /// L'app est-elle dans un dossier où l'on ne peut pas écrire (installée par
-/// root, App Store) ? Seul ce cas justifie de passer par Finder et son mot de passe.
+/// root, App Store) ? Seul ce cas justifie de demander le mot de passe.
 fn needs_admin(path: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
     let not_writable = |p: &Path| {
@@ -315,12 +315,39 @@ fn needs_admin(path: &Path) -> bool {
     not_writable(path) || path.parent().is_some_and(not_writable)
 }
 
-fn trash_app(path: &Path) -> Result<(), String> {
-    match move_to_trash(path) {
-        Ok(()) => Ok(()),
-        Err(e) if needs_admin(path) => move_to_trash_as_admin(path).map_err(|admin| format!("{e} ; {admin}")),
-        Err(e) => Err(e),
+/// `rm -rf` en root sur un chemin déjà validé par `validate` (bundle .app direct
+/// de /Applications ou ~/Applications). `rm` ne suit pas les liens symboliques.
+fn remove_as_admin(path: &Path) -> Result<(), String> {
+    let path = path.to_str().ok_or_else(|| "chemin invalide".to_string())?;
+    let literal = path.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!(
+        "do shell script \"/bin/rm -rf \" & quoted form of \"{literal}\" with administrator privileges"
+    );
+    let out = Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        return Ok(());
     }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    Err(if stderr.contains("-128") {
+        "mot de passe administrateur refusé ou annulé".to_string()
+    } else {
+        stderr.trim().to_string()
+    })
+}
+
+fn remove_app(path: &Path) -> Result<(), String> {
+    if needs_admin(path) {
+        remove_as_admin(path)?;
+    } else {
+        remove_permanently(path)?;
+    }
+    if std::fs::symlink_metadata(path).is_ok() {
+        return Err("l'app n'a pas pu être entièrement supprimée".to_string());
+    }
+    Ok(())
 }
 
 pub fn uninstall(paths: Vec<String>) -> Vec<UninstallResult> {
@@ -341,14 +368,14 @@ pub fn uninstall(paths: Vec<String>) -> Vec<UninstallResult> {
                 .as_deref()
                 .map(|h| leftovers_for(h, &bundle, &installed))
                 .unwrap_or_default();
-            if let Err(e) = trash_app(&bundle.path) {
+            if let Err(e) = remove_app(&bundle.path) {
                 return UninstallResult { path: p, ok: false, freed_bytes: 0, errors: vec![e] };
             }
             let mut freed_bytes = app_bytes;
             let mut errors = Vec::new();
             for leftover in leftovers {
                 let size = dir_size(&leftover);
-                match move_to_trash(&leftover) {
+                match remove_permanently(&leftover) {
                     Ok(()) => freed_bytes += size,
                     Err(e) => errors.push(format!("{} : {e}", leftover.display())),
                 }
@@ -374,6 +401,19 @@ mod tests {
         assert!(validate("/etc/hosts").is_err());
         assert!(validate("/System/Applications/Calculator.app").is_err());
         assert!(validate("/Applications/Safari.app").is_err());
+    }
+
+    #[test]
+    fn removes_a_user_writable_app_permanently() {
+        let dir = dirs::home_dir().unwrap().join(".mac_cleaner_test_app/Fake.app/Contents");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Info.plist"), b"x").unwrap();
+        let app = dir.parent().unwrap().to_path_buf();
+        let res = remove_app(&app);
+        let gone = !app.exists();
+        let _ = std::fs::remove_dir_all(app.parent().unwrap());
+        assert!(res.is_ok(), "{res:?}");
+        assert!(gone);
     }
 
     #[test]

@@ -68,7 +68,7 @@ async function confirmUninstall() {
   const bytes = done.reduce((sum, r) => sum + r.freed_bytes, 0);
   const leftoversFailed = done.reduce((sum, r) => sum + r.errors.length, 0);
   toast.value =
-    `${done.length} app${done.length > 1 ? "s" : ""} déplacée${done.length > 1 ? "s" : ""} vers la corbeille (${formatBytes(bytes)})` +
+    `${done.length} app${done.length > 1 ? "s" : ""} désinstallée${done.length > 1 ? "s" : ""} (${formatBytes(bytes)} libérés)` +
     (leftoversFailed ? ` · ${leftoversFailed} fichier(s) associé(s) ignoré(s)` : "");
 }
 
@@ -160,8 +160,9 @@ onMounted(() => {
 
     <ConfirmModal
       v-if="confirmOpen"
-      title="Désinstaller"
+      title="Désinstaller définitivement"
       confirm-label="Désinstaller"
+      danger
       @confirm="confirmUninstall"
       @cancel="confirmOpen = false"
     >
@@ -170,8 +171,9 @@ onMounted(() => {
         ({{ formatBytes(selectedAppsBytes) }}).
       </p>
       <p>
-        Les apps et leurs fichiers associés partent à la corbeille. macOS peut demander ton mot de
-        passe pour les apps installées par un administrateur ou l'App Store.
+        Les apps et leurs fichiers associés sont <strong>supprimés définitivement</strong>, sans
+        passer par la corbeille. macOS peut demander ton mot de passe pour les apps installées par
+        un administrateur ou l'App Store.
       </p>
     </ConfirmModal>
   </div>

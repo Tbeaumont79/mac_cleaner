@@ -331,7 +331,6 @@ export async function uninstallSelectedApps(): Promise<UninstallResult[]> {
   } finally {
     appsUninstalling.value = false;
     void refreshDisk();
-    if (junkScanned.value) void scanJunk();
   }
 }
 
