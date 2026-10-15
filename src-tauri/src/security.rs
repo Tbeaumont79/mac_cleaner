@@ -198,6 +198,10 @@ fn pending_updates(prefs: Option<&plist::Dictionary>, current_os: Option<&str>) 
     let (Some(prefs), Some(current)) = (prefs, current_os) else {
         return check(Status::Unknown, "État indisponible.".into());
     };
+    // Sans trace de recherche de mises à jour, on ne peut rien affirmer.
+    if !prefs.contains_key("FirstOfferDateDictionary") && !prefs.contains_key("RecommendedUpdates") {
+        return check(Status::Unknown, "Aucune recherche de mises à jour connue.".into());
+    }
     let current = parse_version(current);
     let newer: Vec<Vec<u64>> = offered_os_versions(prefs)
         .iter()
@@ -295,6 +299,7 @@ mod tests {
         assert_eq!(c.detail, "En attente : Safari.");
 
         assert_eq!(pending_updates(None, Some("26.7.1")).status, Status::Unknown);
+        assert_eq!(pending_updates(Some(&plist::Dictionary::new()), Some("26.7.1")).status, Status::Unknown);
     }
 
     #[test]

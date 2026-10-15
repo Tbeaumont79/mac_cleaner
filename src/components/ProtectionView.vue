@@ -43,7 +43,6 @@ const sortedItems = computed(() => {
   );
 });
 
-
 onMounted(() => {
   if (!protScannedAt.value) scanProtection();
 });
