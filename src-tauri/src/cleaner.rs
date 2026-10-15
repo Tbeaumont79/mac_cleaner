@@ -159,18 +159,12 @@ pub(crate) fn move_to_trash(path: &Path) -> Result<(), String> {
     ctx.delete(path).map_err(|e| e.to_string())
 }
 
-/// Passe par Finder, qui sait demander le mot de passe administrateur
-/// (apps installées par root, App Store). Réservé aux bundles d'apps.
-pub(crate) fn move_to_trash_as_admin(path: &Path) -> Result<(), String> {
-    trash::delete(path).map_err(|e| e.to_string())
-}
-
 /// Supprime **définitivement** un fichier ou un dossier.
 ///
 /// On lit les métadonnées via `symlink_metadata` pour **ne pas suivre les liens
 /// symboliques** : si l'entrée est un lien, on supprime le lien lui-même, jamais
 /// sa cible (qui pourrait pointer hors de la zone autorisée).
-fn remove_permanently(path: &std::path::Path) -> Result<(), String> {
+pub(crate) fn remove_permanently(path: &std::path::Path) -> Result<(), String> {
     let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     let res = if meta.file_type().is_dir() {
         std::fs::remove_dir_all(path)
