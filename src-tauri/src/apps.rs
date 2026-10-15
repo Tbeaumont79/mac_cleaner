@@ -59,7 +59,7 @@ fn read_bundle(path: &Path) -> Option<Bundle> {
     let info = plist::Value::from_file(path.join("Contents/Info.plist")).ok()?;
     let dict = info.as_dictionary()?;
     let get = |k: &str| dict.get(k).and_then(|v| v.as_string()).map(str::to_string);
-    let bundle_id = get("CFBundleIdentifier")?;
+    let bundle_id = get("CFBundleIdentifier").filter(|id| is_valid_bundle_id(id))?;
     let stem = path.file_stem()?.to_string_lossy().into_owned();
     Some(Bundle {
         path: path.to_path_buf(),
@@ -82,6 +82,16 @@ fn clean_name(name: &str) -> String {
         .to_string()
 }
 
+/// Forme inverse-DNS stricte : l'identifiant sert à construire des chemins, il
+/// ne doit jamais pouvoir être vide, absolu ou contenir `..` ou `/`.
+fn is_valid_bundle_id(id: &str) -> bool {
+    let parts: Vec<&str> = id.split('.').collect();
+    parts.len() >= 2
+        && parts.iter().all(|p| {
+            !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+}
+
 fn is_removable(bundle_id: &str) -> bool {
     !bundle_id.starts_with("com.apple.") && bundle_id != OWN_BUNDLE_ID
 }
@@ -94,29 +104,36 @@ fn is_app_dir(path: &Path) -> bool {
 }
 
 /// Fichiers associés à une app dans ~/Library, par identifiant de bundle exact
-/// (et par nom exact pour Application Support et Logs).
-fn leftovers_for(home: &Path, bundle_id: &str, name: &str) -> Vec<PathBuf> {
+/// (et par nom exact pour Application Support et Logs). Rien n'est renvoyé
+/// pour ce qu'une autre copie installée de l'app partage encore.
+fn leftovers_for(home: &Path, bundle: &Bundle, installed: &[Bundle]) -> Vec<PathBuf> {
+    let others = || installed.iter().filter(|o| o.path != bundle.path);
+    if others().any(|o| o.bundle_id == bundle.bundle_id) {
+        return Vec::new();
+    }
+    let id = bundle.bundle_id.as_str();
     let lib = home.join("Library");
     let mut candidates = vec![
-        lib.join("Application Support").join(bundle_id),
-        lib.join("Application Scripts").join(bundle_id),
-        lib.join("Caches").join(bundle_id),
-        lib.join("Containers").join(bundle_id),
-        lib.join("Cookies").join(format!("{bundle_id}.binarycookies")),
-        lib.join("HTTPStorages").join(bundle_id),
-        lib.join("HTTPStorages").join(format!("{bundle_id}.binarycookies")),
-        lib.join("LaunchAgents").join(format!("{bundle_id}.plist")),
-        lib.join("Logs").join(bundle_id),
-        lib.join("Preferences").join(format!("{bundle_id}.plist")),
-        lib.join("Saved Application State").join(format!("{bundle_id}.savedState")),
-        lib.join("WebKit").join(bundle_id),
+        lib.join("Application Support").join(id),
+        lib.join("Application Scripts").join(id),
+        lib.join("Caches").join(id),
+        lib.join("Containers").join(id),
+        lib.join("Cookies").join(format!("{id}.binarycookies")),
+        lib.join("HTTPStorages").join(id),
+        lib.join("HTTPStorages").join(format!("{id}.binarycookies")),
+        lib.join("LaunchAgents").join(format!("{id}.plist")),
+        lib.join("Logs").join(id),
+        lib.join("Preferences").join(format!("{id}.plist")),
+        lib.join("Saved Application State").join(format!("{id}.savedState")),
+        lib.join("WebKit").join(id),
     ];
-    if is_safe_name(name) {
+    let name = bundle.name.as_str();
+    if is_safe_name(name) && !others().any(|o| o.name.eq_ignore_ascii_case(name)) {
         candidates.push(lib.join("Application Support").join(name));
         candidates.push(lib.join("Logs").join(name));
     }
     if let Ok(read) = std::fs::read_dir(lib.join("Group Containers")) {
-        let suffix = format!(".{bundle_id}");
+        let suffix = format!(".{id}");
         for entry in read.filter_map(Result::ok) {
             if entry.file_name().to_string_lossy().ends_with(&suffix) {
                 candidates.push(entry.path());
@@ -127,6 +144,8 @@ fn leftovers_for(home: &Path, bundle_id: &str, name: &str) -> Vec<PathBuf> {
     candidates.dedup();
     candidates
         .into_iter()
+        // Toujours exactement ~/Library/<dossier>/<élément>, jamais plus haut.
+        .filter(|p| p.parent().and_then(Path::parent) == Some(lib.as_path()))
         .filter(|p| std::fs::symlink_metadata(p).is_ok())
         .collect()
 }
@@ -170,6 +189,14 @@ fn last_used_days(paths: &[PathBuf]) -> Vec<Option<u64>> {
     let Ok(out) = out else {
         return vec![None; paths.len()];
     };
+    // Un chemin en échec interrompt mdls pour tous les suivants : on refait
+    // alors un appel par chemin.
+    if !out.status.success() && paths.len() > 1 {
+        return paths
+            .iter()
+            .flat_map(|p| last_used_days(std::slice::from_ref(p)))
+            .collect();
+    }
     let text = String::from_utf8_lossy(&out.stdout);
     let values: Vec<&str> = text.split('\0').collect();
     let today = SystemTime::now()
@@ -204,19 +231,23 @@ fn parse_day(s: &str) -> Option<u64> {
     u64::try_from(era * 146_097 + doe - 719_468).ok()
 }
 
-pub fn list() -> Vec<AppInfo> {
-    let Some(home) = dirs::home_dir() else {
-        return Vec::new();
-    };
-    let mut bundles: Vec<Bundle> = app_dirs()
+fn installed_bundles() -> Vec<Bundle> {
+    app_dirs()
         .iter()
         .filter_map(|d| std::fs::read_dir(d).ok())
         .flat_map(|read| read.filter_map(Result::ok))
         .map(|e| e.path())
         .filter(|p| is_app_dir(p))
         .filter_map(|p| read_bundle(&p))
-        .filter(|b| is_removable(&b.bundle_id))
-        .collect();
+        .collect()
+}
+
+pub fn list() -> Vec<AppInfo> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    let installed = installed_bundles();
+    let mut bundles: Vec<&Bundle> = installed.iter().filter(|b| is_removable(&b.bundle_id)).collect();
     bundles.sort_by_key(|b| b.name.to_lowercase());
 
     let paths: Vec<PathBuf> = bundles.iter().map(|b| b.path.clone()).collect();
@@ -227,7 +258,7 @@ pub fn list() -> Vec<AppInfo> {
         .into_iter()
         .zip(days)
         .map(|(b, last_used_days)| {
-            let leftovers: Vec<Leftover> = leftovers_for(&home, &b.bundle_id, &b.name)
+            let leftovers: Vec<Leftover> = leftovers_for(&home, b, &installed)
                 .into_iter()
                 .map(|p| Leftover {
                     size_bytes: dir_size(&p),
@@ -241,9 +272,9 @@ pub fn list() -> Vec<AppInfo> {
                 leftovers,
                 running: is_running(&b.path, &procs),
                 last_used_days,
-                name: b.name,
-                bundle_id: b.bundle_id,
-                version: b.version,
+                name: b.name.clone(),
+                bundle_id: b.bundle_id.clone(),
+                version: b.version.clone(),
             }
         })
         .collect()
@@ -270,6 +301,26 @@ fn validate(path: &str) -> Result<Bundle, String> {
     Ok(bundle)
 }
 
+/// L'app est-elle dans un dossier où l'on ne peut pas écrire (installée par
+/// root, App Store) ? Seul ce cas justifie de passer par Finder et son mot de passe.
+fn needs_admin(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let not_writable = |p: &Path| {
+        std::ffi::CString::new(p.as_os_str().as_bytes())
+            .map(|c| unsafe { libc::access(c.as_ptr(), libc::W_OK) } != 0)
+            .unwrap_or(false)
+    };
+    not_writable(path) || path.parent().is_some_and(not_writable)
+}
+
+fn trash_app(path: &Path) -> Result<(), String> {
+    match move_to_trash(path) {
+        Ok(()) => Ok(()),
+        Err(e) if needs_admin(path) => move_to_trash_as_admin(path).map_err(|admin| format!("{e} ; {admin}")),
+        Err(e) => Err(e),
+    }
+}
+
 pub fn uninstall(paths: Vec<String>) -> Vec<UninstallResult> {
     let home = dirs::home_dir();
     paths
@@ -282,18 +333,22 @@ pub fn uninstall(paths: Vec<String>) -> Vec<UninstallResult> {
                 }
             };
             let app_bytes = dir_size(&bundle.path);
-            if let Err(e) = move_to_trash(&bundle.path).or_else(|_| move_to_trash_as_admin(&bundle.path)) {
+            // Les fichiers associés se calculent avant que l'app ne quitte son dossier.
+            let installed = installed_bundles();
+            let leftovers = home
+                .as_deref()
+                .map(|h| leftovers_for(h, &bundle, &installed))
+                .unwrap_or_default();
+            if let Err(e) = trash_app(&bundle.path) {
                 return UninstallResult { path: p, ok: false, freed_bytes: 0, errors: vec![e] };
             }
             let mut freed_bytes = app_bytes;
             let mut errors = Vec::new();
-            if let Some(home) = &home {
-                for leftover in leftovers_for(home, &bundle.bundle_id, &bundle.name) {
-                    let size = dir_size(&leftover);
-                    match move_to_trash(&leftover) {
-                        Ok(()) => freed_bytes += size,
-                        Err(e) => errors.push(format!("{} : {e}", leftover.display())),
-                    }
+            for leftover in leftovers {
+                let size = dir_size(&leftover);
+                match move_to_trash(&leftover) {
+                    Ok(()) => freed_bytes += size,
+                    Err(e) => errors.push(format!("{} : {e}", leftover.display())),
                 }
             }
             UninstallResult { path: p, ok: true, freed_bytes, errors }
@@ -317,6 +372,38 @@ mod tests {
         assert!(validate("/etc/hosts").is_err());
         assert!(validate("/System/Applications/Calculator.app").is_err());
         assert!(validate("/Applications/Safari.app").is_err());
+    }
+
+    #[test]
+    fn bundle_ids_must_be_reverse_dns() {
+        assert!(is_valid_bundle_id("com.tinyspeck.slackmacgap"));
+        assert!(is_valid_bundle_id("dev.kdrag0n.MacVirt"));
+        for bad in ["", "..", "Office", "../../Documents", "/Users/x", "com..x", "com.x/y", "com.x."] {
+            assert!(!is_valid_bundle_id(bad), "{bad}");
+        }
+    }
+
+    fn bundle(path: &str, id: &str, name: &str) -> Bundle {
+        Bundle { path: PathBuf::from(path), name: name.into(), bundle_id: id.into(), version: None }
+    }
+
+    #[test]
+    fn shared_bundle_ids_keep_their_leftovers() {
+        let home = dirs::home_dir().unwrap();
+        let a = bundle("/Applications/Foo.app", "com.google.Chrome", "Foo");
+        let b = bundle("/Applications/Foo 2.app", "com.google.Chrome", "Foo");
+        assert!(leftovers_for(&home, &a, &[bundle("/Applications/Foo.app", "com.google.Chrome", "Foo"), b]).is_empty());
+    }
+
+    #[test]
+    fn leftovers_stay_one_level_under_library() {
+        let home = dirs::home_dir().unwrap();
+        let lib = home.join("Library");
+        for app in installed_bundles() {
+            for p in leftovers_for(&home, &app, &installed_bundles()) {
+                assert_eq!(p.parent().and_then(Path::parent), Some(lib.as_path()), "{}", p.display());
+            }
+        }
     }
 
     #[test]

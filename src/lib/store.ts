@@ -270,6 +270,7 @@ async function doLoadApps() {
 }
 
 export function toggleApp(path: string) {
+  appsError.value = null;
   const next = new Set(selectedApps.value);
   next.has(path) ? next.delete(path) : next.add(path);
   selectedApps.value = next;

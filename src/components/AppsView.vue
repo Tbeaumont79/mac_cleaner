@@ -61,6 +61,7 @@ function toggle(path: string) {
 
 async function confirmUninstall() {
   confirmOpen.value = false;
+  toast.value = null;
   const results = await uninstallSelectedApps();
   const done = results.filter((r) => r.ok);
   if (!done.length) return;
