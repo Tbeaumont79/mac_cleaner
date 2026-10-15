@@ -3,7 +3,7 @@
 // `CategoryId` de src-tauri/src/targets.rs (serde sérialise par nom de variante).
 
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 
 export type CategoryId =
   | "UserCaches"
@@ -106,6 +106,14 @@ export interface LaunchItem {
   signature: Signature | null;
 }
 
+export interface SecurityCheck {
+  id: string;
+  label: string;
+  status: "Ok" | "Warning" | "Unknown";
+  detail: string;
+  settings_url: string | null;
+}
+
 export interface TrashResult {
   path: string;
   ok: boolean;
@@ -154,6 +162,18 @@ export function listLaunchItems(withSignatures: boolean): Promise<LaunchItem[]> 
 
 export function setLaunchItemEnabled(plistPath: string, enabled: boolean): Promise<void> {
   return invoke<void>("set_launch_item_enabled", { plistPath, enabled });
+}
+
+export function securityChecks(): Promise<SecurityCheck[]> {
+  return invoke<SecurityCheck[]>("security_checks");
+}
+
+export function openSettings(url: string): Promise<void> {
+  return openUrl(url);
+}
+
+export function revealInFinder(path: string): Promise<void> {
+  return revealItemInDir(path);
 }
 
 export function diskUsage(): Promise<DiskUsage | null> {
