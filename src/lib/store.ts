@@ -4,6 +4,8 @@ import {
   type CategoryId,
   type LaunchItem,
   type MaintenanceTask,
+  type SecurityCheck,
+  type Signature,
   type TaskId,
   type TaskResult,
   type CategoryScan,
@@ -19,6 +21,7 @@ import {
   listLaunchItems,
   listMaintenanceTasks,
   runMaintenance,
+  securityChecks,
   setLaunchItemEnabled,
   formatBytes,
   scan,
@@ -26,7 +29,7 @@ import {
   uninstallApps,
 } from "./api";
 
-export type View = "scan" | "junk" | "speed" | "files" | "apps";
+export type View = "scan" | "junk" | "prot" | "speed" | "files" | "apps";
 
 export const view = ref<View>("scan");
 
@@ -373,5 +376,61 @@ export async function setLaunchItem(item: LaunchItem, enabled: boolean): Promise
     return false;
   } finally {
     launchItemBusy.value = null;
+  }
+}
+
+export const checks = ref<SecurityCheck[]>([]);
+export const signedItems = ref<LaunchItem[]>([]);
+export const protScanning = ref(false);
+export const protScannedAt = ref<Date | null>(null);
+export const protError = ref<string | null>(null);
+
+export interface SignatureInfo {
+  label: string;
+  tone: "ok" | "warn" | "bad";
+}
+
+export function signatureInfo(sig: Signature | null): SignatureInfo {
+  if (sig === null) return { label: "Non analysé", tone: "warn" };
+  if (typeof sig === "object") return { label: sig.Trusted.authority.replace(/^Developer ID Application: /, ""), tone: "ok" };
+  switch (sig) {
+    case "AdHoc":
+      return { label: "Signature locale, éditeur non vérifié", tone: "warn" };
+    case "Script":
+      return { label: "Script, éditeur non vérifiable", tone: "warn" };
+    case "Unsigned":
+      return { label: "Non signé", tone: "bad" };
+    case "Invalid":
+      return { label: "Signature invalide", tone: "bad" };
+    case "ProgramMissing":
+      return { label: "Programme introuvable", tone: "bad" };
+  }
+}
+
+export const protIssues = computed(
+  () =>
+    checks.value.filter((c) => c.status === "Warning").length +
+    signedItems.value.filter((i) => signatureInfo(i.signature).tone === "bad").length,
+);
+
+let protScan: Promise<void> | null = null;
+
+export function scanProtection(): Promise<void> {
+  protScan ??= doScanProtection().finally(() => (protScan = null));
+  return protScan;
+}
+
+async function doScanProtection() {
+  protScanning.value = true;
+  protError.value = null;
+  try {
+    const [c, items] = await Promise.all([securityChecks(), listLaunchItems(true)]);
+    checks.value = c;
+    signedItems.value = items;
+    protScannedAt.value = new Date();
+  } catch (e) {
+    protError.value = String(e);
+  } finally {
+    protScanning.value = false;
   }
 }

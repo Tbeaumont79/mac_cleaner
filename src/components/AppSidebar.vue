@@ -7,12 +7,14 @@ import {
   disk,
   junkScanned,
   junkTotal,
+  protIssues,
+  protScannedAt,
   view,
 } from "../lib/store";
 import IconTile from "./IconTile.vue";
 
 interface NavItem {
-  id: View | null;
+  id: View;
   icon: IconName;
   label: string;
   badge: string;
@@ -25,7 +27,12 @@ const modules = computed<NavItem[]>(() => [
     label: "Nettoyage",
     badge: junkScanned.value && junkTotal.value ? formatBytes(junkTotal.value) : "",
   },
-  { id: null, icon: "prot", label: "Protection", badge: "Bientôt" },
+  {
+    id: "prot",
+    icon: "prot",
+    label: "Protection",
+    badge: protScannedAt.value && protIssues.value ? String(protIssues.value) : "",
+  },
   { id: "speed", icon: "speed", label: "Performance", badge: "" },
   { id: "apps", icon: "apps", label: "Applications", badge: "" },
   {
@@ -68,9 +75,8 @@ const diskStats = computed(() => {
       :key="item.label"
       type="button"
       class="nav-item"
-      :class="{ active: item.id !== null && view === item.id, soon: item.id === null }"
-      :disabled="item.id === null"
-      @click="item.id && (view = item.id)"
+      :class="{ active: view === item.id }"
+      @click="view = item.id"
     >
       <IconTile :name="item.icon" />
       <span class="label">{{ item.label }}</span>
@@ -119,17 +125,13 @@ const diskStats = computed(() => {
   color: var(--text-soft);
   text-align: left;
 }
-.nav-item:hover:not(:disabled) {
+.nav-item:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 .nav-item.active {
   font-weight: 600;
   background: rgba(255, 255, 255, 0.16);
   color: var(--text);
-}
-.nav-item.soon:disabled {
-  opacity: 0.45;
-  cursor: default;
 }
 .label {
   flex: 1;

@@ -6,6 +6,7 @@ mod launchitems;
 mod largefiles;
 mod maintenance;
 mod scanner;
+mod security;
 mod targets;
 
 use targets::CategoryId;
@@ -77,6 +78,11 @@ async fn set_launch_item_enabled(plist_path: String, enabled: bool) -> Result<()
     launchitems::set_enabled(&plist_path, enabled)
 }
 
+#[tauri::command]
+async fn security_checks() -> Vec<security::Check> {
+    security::checks()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -92,7 +98,8 @@ pub fn run() {
             list_maintenance_tasks,
             run_maintenance,
             list_launch_items,
-            set_launch_item_enabled
+            set_launch_item_enabled,
+            security_checks
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
