@@ -111,8 +111,10 @@ export interface CleanSummary {
   errors: string[];
 }
 
-export async function cleanSelected(): Promise<CleanSummary | null> {
-  const targets = selectedJunk.value;
+export async function cleanSelected(ids?: CategoryId[]): Promise<CleanSummary | null> {
+  const targets = ids
+    ? categories.value.filter((c) => ids.includes(c.id))
+    : selectedJunk.value;
   if (targets.length === 0 || junkCleaning.value || junkScanning.value) return null;
   const permanent = new Set(targets.filter((c) => c.permanent).map((c) => c.id));
   junkCleaning.value = true;
@@ -237,12 +239,26 @@ export async function runSmartScan() {
   smartPhase.value = "results";
 }
 
-/** Nettoie la sélection puis exécute les tâches de maintenance choisies. */
+export const smartPlan = ref<{ junk: CategoryId[]; tasks: TaskId[] }>({ junk: [], tasks: [] });
+
+/** Fige la sélection confirmée par l'utilisateur, nettoie puis exécute les tâches. */
 export async function runSmartClean() {
   if (smartPhase.value !== "results") return;
+  const plan = {
+    junk: selectedJunk.value.map((c) => c.id),
+    tasks: [...selectedTasks.value],
+  };
+  smartPlan.value = plan;
   smartPhase.value = "cleaning";
-  smartSummary.value = selectedJunk.value.length ? await cleanSelected() : null;
-  smartTaskResults.value = await runSelectedTasks();
+  smartSummary.value = null;
+  smartTaskResults.value = [];
+  if (plan.junk.length) {
+    // Une analyse lancée ailleurs (désinstallation, gros fichiers) doit finir d'abord.
+    if (junkScan) await junkScan;
+    smartSummary.value = await cleanSelected(plan.junk);
+    if (!smartSummary.value && !junkError.value) junkError.value = "Le nettoyage n'a pas pu démarrer.";
+  }
+  smartTaskResults.value = await runSelectedTasks(plan.tasks);
   const didSomething = smartSummary.value !== null || smartTaskResults.value.length > 0;
   smartPhase.value = didSomething ? "cleaned" : "results";
 }
@@ -353,12 +369,13 @@ export function toggleTask(id: TaskId) {
   selectedTasks.value = next;
 }
 
-export async function runSelectedTasks(): Promise<TaskResult[]> {
-  if (tasksRunning.value || selectedTasks.value.size === 0) return [];
+export async function runSelectedTasks(ids?: TaskId[]): Promise<TaskResult[]> {
+  const chosen = ids ?? [...selectedTasks.value];
+  if (tasksRunning.value || chosen.length === 0) return [];
   tasksRunning.value = true;
   speedError.value = null;
   try {
-    const results = await runMaintenance([...selectedTasks.value]);
+    const results = await runMaintenance(chosen);
     const next = new Map(taskResults.value);
     for (const r of results) next.set(r.id, r);
     taskResults.value = next;
@@ -366,7 +383,7 @@ export async function runSelectedTasks(): Promise<TaskResult[]> {
     return results;
   } catch (e) {
     speedError.value = String(e);
-    return [];
+    return chosen.map((id) => ({ id, ok: false, error: String(e) }));
   } finally {
     tasksRunning.value = false;
   }

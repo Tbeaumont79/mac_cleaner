@@ -16,7 +16,7 @@ const needsPassword = computed(() => chosenTasks.value.some((t) => t.admin));
 
 <template>
   <ConfirmModal
-    :title="permanent.length ? 'Suppression définitive' : 'Confirmer'"
+    :title="permanent.length ? 'Suppression définitive' : chosenTasks.length ? 'Confirmer' : 'Confirmer le nettoyage'"
     :confirm-label="permanent.length ? 'Supprimer définitivement' : chosenTasks.length ? 'Lancer' : 'Nettoyer'"
     :danger="permanent.length > 0"
     @confirm="$emit('confirm')"

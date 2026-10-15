@@ -9,6 +9,8 @@ import {
   junkCleaning,
   junkError,
   junkScanning,
+  appsUninstalling,
+  filesTrashing,
   protError,
   protIssues,
   protScanning,
@@ -19,6 +21,7 @@ import {
   selectedJunkBytes,
   selectedTasks,
   smartPhase,
+  smartPlan,
   smartStep,
   smartSummary,
   smartTaskResults,
@@ -48,8 +51,26 @@ const cleanedWell = computed(
   () =>
     (cleanedBytes.value > 0 || tasksOk.value > 0) &&
     !smartSummary.value?.errors.length &&
-    tasksFailed.value === 0,
+    tasksFailed.value === 0 &&
+    !errorMessage.value,
 );
+
+const junkPlanned = computed(() => smartPlan.value.junk.length > 0);
+const tasksPlanned = computed(() => smartPlan.value.tasks.length > 0);
+
+/// Valeur du cercle : l'espace à nettoyer, ou le nombre de tâches quand il n'y a que ça.
+const orb = computed(() => {
+  if (smartPhase.value === "cleaned") {
+    return junkPlanned.value
+      ? { value: formatBytes(cleanedBytes.value), caption: "nettoyés" }
+      : { value: String(tasksOk.value), caption: tasksOk.value > 1 ? "tâches exécutées" : "tâche exécutée" };
+  }
+  if (selectedJunk.value.length || selectedTasks.value.size === 0) {
+    return { value: formatBytes(selectedJunkBytes.value), caption: "à nettoyer" };
+  }
+  const n = selectedTasks.value.size;
+  return { value: String(n), caption: n > 1 ? "tâches à exécuter" : "tâche à exécuter" };
+});
 
 const hasWork = computed(() => selectedJunk.value.length > 0 || selectedTasks.value.size > 0);
 
@@ -59,12 +80,18 @@ const title = computed(
       idle: "Prêt pour un grand ménage ?",
       scanning: "Analyse en cours",
       results: "Analyse terminée",
-      cleaning: "Nettoyage en cours",
-      cleaned: cleanedWell.value ? "Ton Mac est tout propre" : "Nettoyage terminé",
+      cleaning: junkPlanned.value ? "Nettoyage en cours" : "Maintenance en cours",
+      cleaned: !cleanedWell.value
+        ? "Terminé, avec des erreurs"
+        : junkPlanned.value
+          ? "Ton Mac est tout propre"
+          : "Maintenance terminée",
     })[smartPhase.value],
 );
 
-const errorMessage = computed(() => junkError.value ?? protError.value ?? speedError.value);
+const errorMessage = computed(() =>
+  [junkError.value, protError.value, speedError.value].filter(Boolean).join(" · "),
+);
 
 const subtitle = computed(() => {
   switch (smartPhase.value) {
@@ -81,7 +108,7 @@ const subtitle = computed(() => {
         ? "Vérifie le détail de chaque module ou lance tout en un clic."
         : "Rien à faire avec la sélection actuelle.";
     case "cleaning":
-      return junkCleaning.value ? "Déplacement des fichiers vers la corbeille…" : "Exécution des tâches de maintenance…";
+      return tasksRunning.value ? "Exécution des tâches de maintenance…" : "Déplacement des fichiers vers la corbeille…";
     case "cleaned": {
       const parts: string[] = [];
       if (smartSummary.value) parts.push(describeClean(smartSummary.value));
@@ -113,7 +140,15 @@ const mainButton = computed(() => {
   }
 });
 
-const busy = computed(() => junkScanning.value || junkCleaning.value || protScanning.value || tasksRunning.value);
+const busy = computed(
+  () =>
+    junkScanning.value ||
+    junkCleaning.value ||
+    protScanning.value ||
+    tasksRunning.value ||
+    appsUninstalling.value ||
+    filesTrashing.value,
+);
 
 function moduleStatus(step: SmartStep, result: string): string {
   switch (smartPhase.value) {
@@ -126,7 +161,8 @@ function moduleStatus(step: SmartStep, result: string): string {
       return mine < current ? "Terminé" : "En attente";
     }
     case "cleaning":
-      return step === "prot" ? result : "En cours…";
+      if (step === "prot") return result;
+      return (step === "junk" ? junkPlanned.value : tasksPlanned.value) ? "En cours…" : "Ignoré";
     default:
       return result;
   }
@@ -188,8 +224,8 @@ async function confirmClean() {
       <div class="ring"></div>
       <div class="core">
         <template v-if="smartPhase === 'results' || smartPhase === 'cleaned'">
-          <span class="value">{{ formatBytes(smartPhase === "cleaned" ? cleanedBytes : selectedJunkBytes) }}</span>
-          <span class="caption">{{ smartPhase === "cleaned" ? "nettoyés" : "à nettoyer" }}</span>
+          <span class="value">{{ orb.value }}</span>
+          <span class="caption">{{ orb.caption }}</span>
         </template>
         <svg
           v-else

@@ -8,6 +8,7 @@ import {
   loadSpeed,
   runSelectedTasks,
   selectedTasks,
+  smartPhase,
   setLaunchItem,
   speedError,
   launchItemError,
@@ -96,7 +97,7 @@ onMounted(() => {
           <input
             type="checkbox"
             :checked="selectedTasks.has(t.id)"
-            :disabled="tasksRunning"
+            :disabled="tasksRunning || smartPhase === 'cleaning'"
             @change="toggle(t.id)"
           />
           <div class="text">
@@ -144,7 +145,7 @@ onMounted(() => {
       <button
         type="button"
         class="btn-accent"
-        :disabled="tasksRunning || selectedTasks.size === 0"
+        :disabled="tasksRunning || selectedTasks.size === 0 || smartPhase === 'cleaning'"
         @click="run"
       >
         Exécuter
