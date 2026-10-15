@@ -1962,6 +1962,7 @@ version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
  "libc",
+ "plist",
  "serde",
  "serde_json",
  "tauri",

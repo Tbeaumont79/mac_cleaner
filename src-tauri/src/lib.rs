@@ -1,3 +1,4 @@
+mod apps;
 mod cleaner;
 mod disk;
 mod guard;
@@ -44,6 +45,16 @@ async fn disk_usage() -> Option<disk::DiskUsage> {
     disk::usage()
 }
 
+#[tauri::command]
+async fn list_apps() -> Vec<apps::AppInfo> {
+    apps::list()
+}
+
+#[tauri::command]
+async fn uninstall_apps(paths: Vec<String>) -> Vec<apps::UninstallResult> {
+    apps::uninstall(paths)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -53,7 +64,9 @@ pub fn run() {
             clean,
             find_large_files,
             trash_paths,
-            disk_usage
+            disk_usage,
+            list_apps,
+            uninstall_apps
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

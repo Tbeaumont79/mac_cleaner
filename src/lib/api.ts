@@ -43,6 +43,30 @@ export interface DiskUsage {
   available_bytes: number;
 }
 
+export interface Leftover {
+  path: string;
+  size_bytes: number;
+}
+
+export interface AppInfo {
+  path: string;
+  name: string;
+  bundle_id: string;
+  version: string | null;
+  app_bytes: number;
+  leftovers: Leftover[];
+  leftover_bytes: number;
+  last_used_days: number | null;
+  running: boolean;
+}
+
+export interface UninstallResult {
+  path: string;
+  ok: boolean;
+  freed_bytes: number;
+  errors: string[];
+}
+
 export interface TrashResult {
   path: string;
   ok: boolean;
@@ -67,6 +91,14 @@ export function trashPaths(paths: string[]): Promise<TrashResult[]> {
 /** Nettoie les catégories sélectionnées (déplacement vers la corbeille). */
 export function clean(categoryIds: CategoryId[]): Promise<CleanResult[]> {
   return invoke<CleanResult[]>("clean", { categoryIds });
+}
+
+export function listApps(): Promise<AppInfo[]> {
+  return invoke<AppInfo[]>("list_apps");
+}
+
+export function uninstallApps(paths: string[]): Promise<UninstallResult[]> {
+  return invoke<UninstallResult[]>("uninstall_apps", { paths });
 }
 
 export function diskUsage(): Promise<DiskUsage | null> {
